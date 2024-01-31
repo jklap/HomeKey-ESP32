@@ -61,11 +61,11 @@ struct LockManagement : Service::LockManagement
 {
   SpanCharacteristic *lockControlPoint;
   SpanCharacteristic *version;
+  const char *TAG = "LockManagement";
 
   LockManagement() : Service::LockManagement()
   {
-
-    Serial.print("Configuring LockManagement\n"); // initialization message
+    ESP_LOGI(TAG, "Configuring LockManagement"); // initialization message
     new Characteristic::Name("Lock Management");
 
     lockControlPoint = new Characteristic::LockControlPoint();
@@ -76,7 +76,7 @@ struct LockManagement : Service::LockManagement
 }; // end LockManagement
 
 // Function to calculate CRC16
-void crc16a(unsigned char *data, unsigned int size, unsigned char *result)
+void crc16a(const unsigned char *data, unsigned int size, unsigned char *result)
 {
   unsigned short w_crc = 0x6363;
 
@@ -136,7 +136,7 @@ struct LockMechanism : Service::LockMechanism
         false);
   } // end constructor
 
-  boolean update(std::vector<char> *callback, int *callbackLen)
+  boolean update(std::vector<char> *callback, int *callbackLen) override
   {
     int targetState = lockTargetState->getNewVal();
     ESP_LOGI(TAG, "New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
@@ -147,7 +147,7 @@ struct LockMechanism : Service::LockMechanism
     return (true);
   }
 
-  void loop()
+  void loop() override
   {
     uint8_t uid[16];
     uint8_t uidLen = 0;
@@ -290,7 +290,7 @@ struct LockMechanism : Service::LockMechanism
 }; // end LockMechanism
 
 struct NFCAccess : Service::NFCAccess
-{ // A standalone Air Pressure Sensor
+{
   SpanCharacteristic *configurationState;
   SpanCharacteristic *nfcControlPoint;
   SpanCharacteristic *nfcSupportedConfiguration;
@@ -304,7 +304,7 @@ struct NFCAccess : Service::NFCAccess
     nfcControlPoint = new Characteristic::NFCAccessControlPoint();
     nfcSupportedConfiguration = new Characteristic::NFCAccessSupportedConfiguration();
   } // end constructor
-  std::vector<uint8_t> get_x(std::vector<uint8_t> pubKey)
+  std::vector<uint8_t> get_x(std::vector<uint8_t> pubKey) const
   {
     mbedtls_ecp_group grp;
     mbedtls_ecp_point point;
@@ -372,7 +372,7 @@ struct NFCAccess : Service::NFCAccess
     }
     if (foundIssuer != nullptr)
     {
-      issuerEndpoint::issuerEndpoint_t *foundEndpoint = 0;
+      issuerEndpoint::issuerEndpoint_t *foundEndpoint = nullptr;
       uint8_t endEphPubKey[tlv8.len(kDevice_Req_Public_Key) + 1] = {0x04};
       memcpy(endEphPubKey + 1, tlv8.buf(kDevice_Req_Public_Key), tlv8.len(kDevice_Req_Public_Key));
       std::vector<uint8_t> endpointId = utils::getHashIdentifier(endEphPubKey, sizeof(endEphPubKey), false);
@@ -384,22 +384,22 @@ struct NFCAccess : Service::NFCAccess
           foundEndpoint = &endpoint;
         }
       }
-      if (foundEndpoint == 0)
+      if (foundEndpoint == nullptr)
       {
         ESP_LOGD(TAG, "Adding new endpoint - ID: %s , PublicKey: %s", utils::bufToHexString(endpointId.data(), 6).c_str(), utils::bufToHexString(endEphPubKey, sizeof(endEphPubKey)).c_str());
         issuerEndpoint::issuerEndpoint_t endpoint;
-        endpointEnrollment::enrollment_t hap;
-        hap.unixTime = std::time(nullptr);
+        endpointEnrollment::enrollment_t enrollment;
+        enrollment.unixTime = std::time(nullptr);
         uint8_t encoded[128];
         size_t olen = 0;
         mbedtls_base64_encode(encoded, 128, &olen, buf, len);
-        hap.payload.insert(hap.payload.begin(), encoded, encoded + olen);
+        enrollment.payload.insert(enrollment.payload.begin(), encoded, encoded + olen);
         std::vector<uint8_t> x_coordinate = get_x(std::vector<uint8_t>(endEphPubKey, endEphPubKey + sizeof(endEphPubKey)));
 
         endpoint.counter = 0;
         endpoint.key_type = tlv8.buf(kDevice_Req_Key_Type)[0];
         endpoint.last_used_at = 0;
-        endpoint.enrollments.hap = hap;
+        endpoint.enrollments.hap = enrollment;
         std::fill(endpoint.persistent_key, endpoint.persistent_key + 32, 0);
         memcpy(endpoint.endpointId, endpointId.data(), 6);
         memcpy(endpoint.publicKey, endEphPubKey, sizeof(endEphPubKey));
@@ -425,7 +425,7 @@ struct NFCAccess : Service::NFCAccess
     return std::make_tuple(readerData.reader_identifier, homeKeyReader::DOES_NOT_EXIST);
   }
 
-  std::vector<uint8_t> getPublicKey(uint8_t *privKey, size_t len)
+  static std::vector<uint8_t> getPublicKey(uint8_t *privKey, size_t len)
   {
     mbedtls_ecp_keypair keypair;
     mbedtls_ecp_keypair_init(&keypair);
@@ -433,10 +433,16 @@ struct NFCAccess : Service::NFCAccess
     mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&ctr_drbg);
-    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
+    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
 
-    int ecp_key = mbedtls_ecp_read_key(MBEDTLS_ECP_DP_SECP256R1, &keypair, privKey, len);
-    int ret = mbedtls_ecp_mul(&keypair.grp, &keypair.Q, &keypair.d, &keypair.grp.G, mbedtls_ctr_drbg_random, &ctr_drbg);
+    int ret = mbedtls_ecp_read_key(MBEDTLS_ECP_DP_SECP256R1, &keypair, privKey, len);
+    if ( ret != 0 ) {
+        // TODO
+    }
+    ret = mbedtls_ecp_mul(&keypair.grp, &keypair.Q, &keypair.d, &keypair.grp.G, mbedtls_ctr_drbg_random, &ctr_drbg);
+    if ( ret != 0 ) {
+        // TODO
+    }
 
     size_t olenPub = 0;
     std::vector<uint8_t> readerPublicKey(MBEDTLS_ECP_MAX_BYTES);
@@ -487,7 +493,7 @@ struct NFCAccess : Service::NFCAccess
       return 1;
   }
 
-  boolean update(std::vector<char> *callback, int *callbackLen)
+  boolean update(std::vector<char> *callback, int *callbackLen) override
   {
     ESP_LOGD(TAG, "PROVISIONED READER KEY: %s", utils::bufToHexString(readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
     ESP_LOGD(TAG, "READER GROUP IDENTIFIER: %s", utils::bufToHexString(readerData.reader_identifier, sizeof(readerData.reader_identifier)).c_str());
@@ -497,18 +503,18 @@ struct NFCAccess : Service::NFCAccess
     char *dataNfcControlPoint = nfcControlPoint->getNewString();
     ESP_LOGD(TAG, "NfcControlPoint Length: %d", strlen(dataNfcControlPoint));
     std::vector<uint8_t> decB64 = utils::decodeB64(dataNfcControlPoint);
-    if (decB64.size() == 0)
+    if (decB64.empty())
       return false;
     ESP_LOGD(TAG, "Decoded data: %s", utils::bufToHexString(decB64.data(), decB64.size()).c_str());
     ESP_LOGD(TAG, "Decoded data length: %d", decB64.size());
     std::vector<BERTLV> tlv = BERTLV::unpack_array(decB64);
     BERTLV operation = BERTLV::findTag(kTLVType1_Operation, tlv);
-    ESP_LOGD(TAG, "Request Operation: %d", operation.value.data()[0]);
+    ESP_LOGD(TAG, "Request Operation: %d", operation.value[0]);
     BERTLV RKR = BERTLV::findTag(kTLVType1_Reader_Key_Request, tlv);
     BERTLV DCR = BERTLV::findTag(kTLVType1_Device_Credential_Request, tlv);
-    if (operation.value.data()[0] == 1)
+    if (operation.value[0] == 1)
     {
-      if (RKR.tag.size() > 0)
+      if (!RKR.tag.empty())
       {
         ESP_LOGI(TAG, "GET READER KEY REQUEST");
         if (strlen((const char *)readerData.reader_private_key) > 0)
@@ -517,18 +523,18 @@ struct NFCAccess : Service::NFCAccess
           TLV<Reader_Key_Response, 2> readerKeyResTlv;
           readerKeyResTlv.create(kReader_Res_Key_Identifier, 8, "KEY.IDENTIFIER");
           memcpy(readerKeyResTlv.buf(kReader_Res_Key_Identifier, 8), readerData.reader_identifier, 8);
-          size_t lenSubTlv = readerKeyResTlv.pack(NULL);
+          size_t lenSubTlv = readerKeyResTlv.pack(nullptr);
           uint8_t subTlv[lenSubTlv];
           readerKeyResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
           readerKeyResTlv.clear();
           readerKeyResTlv.create(kReader_Res_Reader_Key_Response, lenSubTlv, "READER.RESPONSE");
           memcpy(readerKeyResTlv.buf(kReader_Res_Reader_Key_Response, lenSubTlv), subTlv, lenSubTlv);
-          size_t lenTlv = readerKeyResTlv.pack(NULL);
+          size_t lenTlv = readerKeyResTlv.pack(nullptr);
           uint8_t tlv[lenTlv];
           readerKeyResTlv.pack(tlv);
           ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
-          mbedtls_base64_encode(NULL, 0, &out_len, tlv, lenTlv);
+          mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
           uint8_t resB64[out_len + 1];
           int ret = mbedtls_base64_encode(resB64, sizeof(resB64), &out_len, tlv, lenTlv);
           resB64[out_len] = '\0';
@@ -538,9 +544,9 @@ struct NFCAccess : Service::NFCAccess
         }
       }
     }
-    else if (operation.value.data()[0] == 2)
+    else if (operation.value[0] == 2)
     {
-      if (RKR.tag.size() > 0)
+      if (!RKR.tag.empty())
       {
         ESP_LOGI(TAG, "SET READER KEY REQUEST");
         int ret = set_reader_key(RKR.value.data(), RKR.value.size());
@@ -551,18 +557,18 @@ struct NFCAccess : Service::NFCAccess
           TLV<Reader_Key_Response, 2> readerKeyResTlv;
           readerKeyResTlv.create(kReader_Res_Status, 1, "STATUS");
           readerKeyResTlv.val(kReader_Res_Status, 0);
-          size_t lenSubTlv = readerKeyResTlv.pack(NULL);
+          size_t lenSubTlv = readerKeyResTlv.pack(nullptr);
           uint8_t subTlv[lenSubTlv];
           readerKeyResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
           readerKeyResTlv.clear();
           readerKeyResTlv.create(kReader_Res_Reader_Key_Response, lenSubTlv, "READER.RESPONSE");
           memcpy(readerKeyResTlv.buf(kReader_Res_Reader_Key_Response, lenSubTlv), subTlv, lenSubTlv);
-          size_t lenTlv = readerKeyResTlv.pack(NULL);
+          size_t lenTlv = readerKeyResTlv.pack(nullptr);
           uint8_t tlv[lenTlv];
           readerKeyResTlv.pack(tlv);
           ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
-          mbedtls_base64_encode(NULL, 0, &out_len, tlv, lenTlv);
+          mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
           unsigned char resB64[out_len + 1];
           int ret = mbedtls_base64_encode(resB64, out_len, &out_len, tlv, lenTlv);
           resB64[out_len] = '\0';
@@ -571,11 +577,11 @@ struct NFCAccess : Service::NFCAccess
           callback->insert(callback->end(), resB64, resB64 + sizeof(resB64));
         }
       }
-      else if (DCR.tag.size() > 0)
+      else if (!DCR.tag.empty())
       {
         ESP_LOGI(TAG, "PROVISION DEVICE CREDENTIAL REQUEST");
         std::tuple<uint8_t *, int> state = provision_device_cred(DCR.value.data(), DCR.value.size());
-        if (std::get<1>(state) != 99 && std::get<0>(state) != NULL)
+        if (std::get<1>(state) != 99 && std::get<0>(state) != nullptr)
         {
           size_t out_len = 0;
           TLV<Device_Credential_Response, 4> devCredResTlv;
@@ -584,7 +590,7 @@ struct NFCAccess : Service::NFCAccess
           devCredResTlv.create(kDevice_Res_Status, 1, "STATUS");
           memcpy(devCredResTlv.buf(kDevice_Res_Issuer_Key_Identifier, 8), std::get<0>(state), 8);
           devCredResTlv.val(kDevice_Res_Status, std::get<1>(state));
-          size_t lenSubTlv = devCredResTlv.pack(NULL);
+          size_t lenSubTlv = devCredResTlv.pack(nullptr);
           uint8_t subTlv[lenSubTlv];
           devCredResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
@@ -592,11 +598,11 @@ struct NFCAccess : Service::NFCAccess
           devCredResTlv.print(1);
           devCredResTlv.create(kDevice_Credential_Response, lenSubTlv, "DEV.RESPONSE");
           memcpy(devCredResTlv.buf(kDevice_Credential_Response, lenSubTlv), subTlv, lenSubTlv);
-          size_t lenTlv = devCredResTlv.pack(NULL);
+          size_t lenTlv = devCredResTlv.pack(nullptr);
           uint8_t tlv[lenTlv];
           devCredResTlv.pack(tlv);
           ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
-          mbedtls_base64_encode(NULL, 0, &out_len, tlv, lenTlv);
+          mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
           unsigned char resB64[out_len + 1];
           int ret = mbedtls_base64_encode(resB64, out_len, &out_len, tlv, lenTlv);
           resB64[out_len] = '\0';
@@ -606,7 +612,7 @@ struct NFCAccess : Service::NFCAccess
         }
       }
     }
-    else if (operation.value.data()[0] == 3)
+    else if (operation.value[0] == 3)
     {
       ESP_LOGI(TAG, "REMOVE READER KEY REQUEST");
       std::fill(readerData.reader_identifier, readerData.reader_identifier + 8, 0);
@@ -629,44 +635,46 @@ struct NFCAccess : Service::NFCAccess
 
 //////////////////////////////////////
 
-void deleteReaderData(const char *buf)
+void deleteReaderData(__attribute__((unused)) const char *buf)
 {
+  const char *TAG = "deleteReaderData";
   readerData.issuers.clear();
   std::fill(readerData.identifier, readerData.identifier + 8, 0);
   std::fill(readerData.reader_identifier, readerData.reader_identifier + 8, 0);
   std::fill(readerData.reader_private_key, readerData.reader_private_key + 32, 0);
   esp_err_t erase_nvs = nvs_erase_key(savedData, "READERDATA");
   esp_err_t commit_nvs = nvs_commit(savedData);
-  LOG1("*** NVS W STATUS");
-  LOG1("ERASE: %s", esp_err_to_name(erase_nvs));
-  LOG1("COMMIT: %s", esp_err_to_name(commit_nvs));
-  LOG1("*** NVS W STATUS");
+  ESP_LOGI(TAG, "*** NVS W STATUS");
+  ESP_LOGI(TAG, "ERASE: %s", esp_err_to_name(erase_nvs));
+  ESP_LOGI(TAG, "COMMIT: %s", esp_err_to_name(commit_nvs));
+  ESP_LOGI(TAG, "*** NVS W STATUS");
 }
 
 void pairCallback(bool isPaired)
 {
   if (!isPaired && HAPClient::nAdminControllers() == 0)
   {
-    deleteReaderData(NULL);
+    deleteReaderData(nullptr);
   }
 }
 
 void setFlow(const char *buf)
 {
+  const char *TAG = "setFlow";
   switch (buf[1])
   {
   case '0':
     defaultToStd = false;
-    Serial.println("FAST Flow");
+    ESP_LOGI(TAG, "FAST Flow");
     break;
 
   case '1':
     defaultToStd = true;
-    Serial.println("STANDARD Flow");
+    ESP_LOGI(TAG, "STANDARD Flow");
     break;
 
   default:
-    Serial.println("0 = FAST flow, 1 = STANDARD Flow");
+    ESP_LOGI(TAG, "0 = FAST flow, 1 = STANDARD Flow");
     break;
   }
 }
@@ -677,32 +685,26 @@ void setLogLevel(const char *buf)
   if (strncmp(buf + 1, "E", 1) == 0)
   {
     level = ESP_LOG_ERROR;
-    Serial.println("ERROR");
   }
   else if (strncmp(buf + 1, "W", 1) == 0)
   {
     level = ESP_LOG_WARN;
-    Serial.println("WARNING");
   }
   else if (strncmp(buf + 1, "I", 1) == 0)
   {
     level = ESP_LOG_INFO;
-    Serial.println("INFO");
   }
   else if (strncmp(buf + 1, "D", 1) == 0)
   {
     level = ESP_LOG_DEBUG;
-    Serial.println("DEBUG");
   }
   else if (strncmp(buf + 1, "V", 1) == 0)
   {
     level = ESP_LOG_VERBOSE;
-    Serial.println("VERBOSE");
   }
   else if (strncmp(buf + 1, "N", 1) == 0)
   {
     level = ESP_LOG_NONE;
-    Serial.println("NONE");
   }
 
   esp_log_level_set("*", level);
@@ -710,18 +712,19 @@ void setLogLevel(const char *buf)
 
 void insertDummyIssuers(const char *buf)
 {
+  const char *TAG = "insertDummyIssuers";
   mbedtls_entropy_context entropy;
   mbedtls_entropy_init(&entropy);
   mbedtls_ctr_drbg_context drbg;
   mbedtls_ctr_drbg_init(&drbg);
-  mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, NULL, 0);
+  mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
   std::stringstream strVal;
   strVal << buf[1];
   unsigned int iterations;
   strVal >> iterations;
   if (iterations > 64)
   {
-    Serial.print("\nInvalid Argument\n");
+    ESP_LOGI(TAG, "Invalid Argument");
     return;
   }
   for (size_t i = 0; i < iterations; i++)
@@ -770,9 +773,9 @@ void insertDummyIssuers(const char *buf)
   mbedtls_ctr_drbg_free(&drbg);
 }
 
-void print_issuers(const char *buf)
+void printIssuers(__attribute__((unused)) const char *buf)
 {
-  const char *TAG = "print_issuers";
+  const char *TAG = "printIssuers";
   ESP_LOGI(TAG, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
   for (auto &issuer : readerData.issuers)
   {
@@ -800,7 +803,7 @@ void setup()
   size_t len;
   const char *TAG = "SETUP";
   nvs_open("SAVED_DATA", NVS_READWRITE, &savedData);
-  if (!nvs_get_blob(savedData, "READERDATA", NULL, &len))
+  if (nvs_get_blob(savedData, "READERDATA", nullptr, &len) == ESP_OK )
   {
     uint8_t msgpack[len];
     nvs_get_blob(savedData, "READERDATA", msgpack, &len);
@@ -810,7 +813,7 @@ void setup()
     homeKeyReader::readerData_t p = data.template get<homeKeyReader::readerData_t>();
     readerData = p;
   }
-  // homeSpan.setStatusPin(2);
+  homeSpan.setStatusPin(GPIO_NUM_2);
   // homeSpan.setStatusAutoOff(5);
   homeSpan.reserveSocketConnections(2);
   homeSpan.setLogLevel(0);

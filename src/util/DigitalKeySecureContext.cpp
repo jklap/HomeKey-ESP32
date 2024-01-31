@@ -49,11 +49,13 @@ void DigitalKeySecureContext::unpad_mode_3(unsigned char* message, size_t messag
 }
 
 void DigitalKeySecureContext::encrypt_aes_cbc(const unsigned char* key, unsigned char* iv, const unsigned char* plaintext, size_t length, unsigned char* ciphertext) {
-    size_t olen;
     mbedtls_aes_context aes_ctx;
     mbedtls_aes_init(&aes_ctx);
     mbedtls_aes_setkey_enc(&aes_ctx, key, 128);
     int ret = mbedtls_aes_crypt_cbc(&aes_ctx, MBEDTLS_AES_ENCRYPT, length, iv, plaintext, ciphertext);
+    if ( ret != 0 ) {
+        // TODO
+    }
     // printf("%d\n", strlen((const char *)ciphertext));
     mbedtls_aes_free(&aes_ctx);
 }
@@ -72,6 +74,9 @@ void DigitalKeySecureContext::decrypt_aes_cbc(const unsigned char* key, unsigned
 
 void DigitalKeySecureContext::aes_cmac(const unsigned char* key, const unsigned char* data, size_t data_size, unsigned char* mac) {
     int ret = mbedtls_cipher_cmac(mbedtls_cipher_info_from_values(MBEDTLS_CIPHER_ID_AES, 128, MBEDTLS_MODE_ECB), key, 128, data, data_size, mac);
+    if ( ret != 0 ) {
+        // TODO
+    }
     // std::cout << "result of cmac: " << ret << std::endl;
 }
 
