@@ -737,32 +737,32 @@ void setMqttConfiguration(const char *buf) {
 
 void setLogLevel(const char *buf)
 {
-  esp_log_level_t level = esp_log_level_get("*");
-  if (strncmp(buf + 1, "E", 1) == 0)
-  {
-    level = ESP_LOG_ERROR;
-  }
-  else if (strncmp(buf + 1, "W", 1) == 0)
-  {
-    level = ESP_LOG_WARN;
-  }
-  else if (strncmp(buf + 1, "I", 1) == 0)
-  {
-    level = ESP_LOG_INFO;
-  }
-  else if (strncmp(buf + 1, "D", 1) == 0)
-  {
-    level = ESP_LOG_DEBUG;
-  }
-  else if (strncmp(buf + 1, "V", 1) == 0)
-  {
-    level = ESP_LOG_VERBOSE;
-  }
-  else if (strncmp(buf + 1, "N", 1) == 0)
-  {
-    level = ESP_LOG_NONE;
-  }
+    const char *TAG = "setLogLevel";
+    esp_log_level_t level = esp_log_level_get("*");
 
+    switch (buf[1]) {
+        case 'E':
+            level = ESP_LOG_ERROR;
+            break;
+        case 'W':
+            level = ESP_LOG_WARN;
+            break;
+        case 'I':
+            level = ESP_LOG_INFO;
+            break;
+        case 'D':
+            level = ESP_LOG_DEBUG;
+            break;
+        case 'V':
+            level = ESP_LOG_VERBOSE;
+            break;
+        case 'N':
+            level = ESP_LOG_NONE;
+            break;
+        default:
+            ESP_LOGI(TAG, "Unknown log level: '%c' (should be one of 'E', 'W', 'I', 'D', 'V', 'N')", buf[1]);
+    }
+    ESP_LOGI(TAG, "Log level set to %i", level);
   esp_log_level_set("*", level);
 }
 
