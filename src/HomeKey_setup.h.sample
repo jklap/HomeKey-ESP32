@@ -1,0 +1,46 @@
+#ifndef HOMEKEY_ESP32_HOMEKEY_SETUP_H
+#define HOMEKEY_ESP32_HOMEKEY_SETUP_H
+
+#define DISPLAY_NAME "Test NFC Lock"
+
+// define the HomeKit pairing code (default here is the HomeSpan default)
+// if undefined will use the HomeSpan default
+//#define PAIRING_CODE "46637726"
+
+// disable Serial port access?
+#define DISABLE_SERIAL_PORT false
+
+// comment out to disable OTA updates (default here is the HomeSpan default)
+#define OTA_AUTH "homespan-ota"
+
+#define PN532_USES_SPI
+//#define PN532_USES_I2C
+
+#ifdef PN532_USES_SPI
+    // chip select pin
+    #define PN532_SS (5)
+#endif
+
+// defining MQTT host, username, password sets the defaults but a user is still allowed to configure via CLI
+// NOT defining this will not start MQTT until the user has configured it via the CLI
+//#define MQTT_HOST "192.168.1.10"
+//#define MQTT_PORT 1883
+//#define MQTT_CLIENTID "homekey_mqtt"
+//#define MQTT_USERNAME "<your_mqtt_username>"
+//#define MQTT_PASSWORD "<your_mqtt_password>"
+
+// following is not configurable during runtime
+#define MQTT_PREFIX "homekey"
+
+#define MQTT_AUTH_TOPIC MQTT_PREFIX "/auth"
+#define MQTT_SET_STATE_TOPIC MQTT_PREFIX "/set_state"
+#define MQTT_STATE_TOPIC MQTT_PREFIX "/state"
+#define MQTT_SET_TARGET_STATE_TOPIC MQTT_PREFIX "/set_target_state"
+#define MQTT_SET_CURRENT_STATE_TOPIC MQTT_PREFIX "/set_current_state"
+
+
+// Note: if WIFI_SSID is not set then the device will start a Wifi AP on first boot
+//#define WIFI_SSID "<your_network_ssid>"
+//#define WIFI_CREDENTIALS "<your_network_password>"
+
+#endif //HOMEKEY_ESP32_HOMEKEY_SETUP_H

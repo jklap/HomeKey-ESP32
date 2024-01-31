@@ -5,8 +5,6 @@
 #include "TLV.h"
 #include <mbedtls/sha256.h>
 #include <mbedtls/ecp.h>
-#include <SPI.h>
-#include <PN532_SPI.h>
 #include "PN532.h"
 #include <list>
 #include <util/BERTLV.h>
@@ -17,30 +15,23 @@
 #include <sstream>
 #include <PicoMQTT.h>
 
-#if __has_include("mqtt.h")
-#include <mqtt.h>
-#else
-#define MQTT_HOST "0.0.0.0"
-#define MQTT_PORT 1883
-#define MQTT_CLIENTID "homekey_mqtt"
-#define MQTT_USERNAME "username"
-#define MQTT_PASSWORD "password"
-#define MQTT_AUTH_TOPIC "topic/auth"
-#define MQTT_SET_STATE_TOPIC "topic/set_state"
-#define MQTT_SET_TARGET_STATE_TOPIC "topic/set_target_state"
-#define MQTT_SET_CURRENT_STATE_TOPIC "topic/set_current_state"
-#define MQTT_STATE_TOPIC "topic/state"
-#endif
+#include "HomeKey_setup.h"
 
 using namespace nlohmann;
 
-int currentState = 0;
-
 PicoMQTT::Client mqtt;
+bool mqtt_enabled = false;
 
-#define PN532_SS (5)
+#ifdef PN532_USES_SPI
+#include <SPI.h>
+#include <PN532_SPI.h>
 PN532_SPI pn532spi(SPI, PN532_SS);
 PN532 nfc(pn532spi);
+#else
+#include <PN532_I2C.h>
+PN532_I2C pn532i2c(Wire);
+PN532 nfc(pn532i2c);
+#endif
 
 nvs_handle savedData;
 homeKeyReader::readerData_t readerData;
@@ -110,30 +101,30 @@ struct LockMechanism : Service::LockMechanism
     new Characteristic::Name("NFC Lock");
     lockCurrentState = new Characteristic::LockCurrentState(1, true);
     lockTargetState = new Characteristic::LockTargetState(1, true);
-    mqtt.subscribe(
-        MQTT_SET_STATE_TOPIC, [this](const char *payload)
-        {
-        ESP_LOGD(TAG, "Received message in topic set_state: %s", payload);
-        int state = atoi(payload);
-        lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
-        lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
-        },
-        false);
-    mqtt.subscribe(
-        MQTT_SET_TARGET_STATE_TOPIC, [this](const char *payload)
-        {
-        ESP_LOGD(TAG, "Received message in topic set_target_state: %s", payload);
-        int state = atoi(payload);
-        lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
-        },
-        false);
-    mqtt.subscribe(
-        MQTT_SET_CURRENT_STATE_TOPIC, [this](const char *payload)
-        {
-        ESP_LOGD(TAG, "Received message in topic set_current_state: %s", payload);
-        int state = atoi(payload);
-        lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal()); },
-        false);
+    if ( mqtt_enabled ) {
+        mqtt.subscribe(
+                MQTT_SET_STATE_TOPIC, [this](const char *payload) {
+                    ESP_LOGD(TAG, "Received message in topic set_state: %s", payload);
+                    int state = atoi(payload);
+                    lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
+                    lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
+                },
+                false);
+        mqtt.subscribe(
+                MQTT_SET_TARGET_STATE_TOPIC, [this](const char *payload) {
+                    ESP_LOGD(TAG, "Received message in topic set_target_state: %s", payload);
+                    int state = atoi(payload);
+                    lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
+                },
+                false);
+        mqtt.subscribe(
+                MQTT_SET_CURRENT_STATE_TOPIC, [this](const char *payload) {
+                    ESP_LOGD(TAG, "Received message in topic set_current_state: %s", payload);
+                    int state = atoi(payload);
+                    lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
+                },
+                false);
+    }
   } // end constructor
 
   boolean update(std::vector<char> *callback, int *callbackLen) override
@@ -142,7 +133,9 @@ struct LockMechanism : Service::LockMechanism
     ESP_LOGI(TAG, "New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
 
     // lockCurrentState->setVal(targetState);
-    mqtt.publish(MQTT_STATE_TOPIC, std::to_string(targetState).c_str());
+    if ( mqtt_enabled ) {
+        mqtt.publish(MQTT_STATE_TOPIC, std::to_string(targetState).c_str());
+    }
 
     return (true);
   }
@@ -184,7 +177,9 @@ struct LockMechanism : Service::LockMechanism
               ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", stopTime - startTime);
               int newTargetState = lockTargetState->getNewVal();
               int targetState = lockTargetState->getVal();
-              mqtt.publish(MQTT_STATE_TOPIC, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
+              if ( mqtt_enabled ) {
+                  mqtt.publish(MQTT_STATE_TOPIC, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
+              }
               // lockTargetState->setVal(lockTargetState->getNewVal());
               // lockCurrentState->setVal(lockTargetState->getVal());
               json payload;
@@ -204,7 +199,9 @@ struct LockMechanism : Service::LockMechanism
                 payload["issuerId"] = utils::bufToHexString(foundIssuer->issuerId, 8);
                 payload["endpointId"] = utils::bufToHexString(std::get<0>(auth)->endpointId, 6);
                 payload["homekey"] = true;
-                mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+                if ( mqtt_enabled ) {
+                    mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+                }
               }
             }
             else if (std::get<1>(auth) != homeKeyReader::kFlowFailed)
@@ -218,7 +215,9 @@ struct LockMechanism : Service::LockMechanism
                 ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", stopTime - startTime);
                 int newTargetState = lockTargetState->getNewVal();
                 int targetState = lockTargetState->getVal();
-                mqtt.publish(MQTT_STATE_TOPIC, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
+                if ( mqtt_enabled ) {
+                    mqtt.publish(MQTT_STATE_TOPIC, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
+                }
                 // lockTargetState->setVal(!lockCurrentState->getVal());
                 // lockCurrentState->setVal(lockTargetState->getVal());
                 json payload;
@@ -238,7 +237,9 @@ struct LockMechanism : Service::LockMechanism
                   payload["issuerId"] = utils::bufToHexString(foundIssuer->issuerId, 8);
                   payload["endpointId"] = utils::bufToHexString(foundEndpoint->endpointId, 6);
                   payload["homekey"] = true;
-                  mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+                  if ( mqtt_enabled ) {
+                      mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+                  }
                   std::vector<uint8_t> persistentKey = std::get<2>(auth1);
                   memcpy(foundEndpoint->persistent_key, persistentKey.data(), 32);
                   save_to_nvs();
@@ -261,7 +262,9 @@ struct LockMechanism : Service::LockMechanism
             payload["sak"] = utils::bufToHexString(sak, 1);
             payload["uid"] = utils::bufToHexString(uid, uidLen);
             payload["homekey"] = false;
-            mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+            if ( mqtt_enabled ) {
+                mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+            }
           }
         }
       }
@@ -272,7 +275,9 @@ struct LockMechanism : Service::LockMechanism
         payload["sak"] = utils::bufToHexString(sak, 1);
         payload["uid"] = utils::bufToHexString(uid, uidLen);
         payload["homekey"] = false;
-        mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+        if ( mqtt_enabled ) {
+            mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+        }
       }
     }
     else
@@ -478,6 +483,7 @@ struct NFCAccess : Service::NFCAccess
     ESP_LOGD(TAG, "Got X coordinate: %s", utils::bufToHexString(x_coordinate.data(), x_coordinate.size()).c_str());
     memcpy(readerData.reader_key_x, x_coordinate.data(), x_coordinate.size());
     memcpy(readerData.reader_public_key, pubKey.data(), pubKey.size());
+    // possible the two following return -1???
     memcpy(readerData.reader_private_key, readerKey, tlv8.len(kReader_Req_Reader_Private_Key));
     memcpy(readerData.identifier, uniqueIdentifier, tlv8.len(kReader_Req_Identifier));
     std::vector<uint8_t> readeridentifier = utils::getHashIdentifier(readerData.reader_private_key, sizeof(readerData.reader_private_key), true);
@@ -679,6 +685,56 @@ void setFlow(const char *buf)
   }
 }
 
+void setMqttConfiguration(const char *buf) {
+    const char *TAG = "setMqttConfiguration";
+
+    // TODO: M<host>:<port> <username>:<password> [<client_id>]
+    mqttData_t data;
+
+    char *strPtr = const_cast<char *>(buf);
+    char *token;
+
+    strPtr++; // skip the command character
+
+    token = strsep(&strPtr, ":");
+    ESP_LOGD(TAG, "Name: '%s'", token);
+    memcpy(&data.mqtt_host, token, sizeof(token));
+
+    token = strsep(&strPtr, " ");
+    ESP_LOGI("test", "Port: '%s'", token);
+    data.mqtt_port = atoi(token);
+
+    token = strsep(&strPtr, ":");
+    ESP_LOGI("test", "Username: '%s'", token);
+    memcpy(&data.mqtt_username, token, sizeof(token));
+
+    token = strsep(&strPtr, " ");
+    ESP_LOGI("test", "Password: '%s'", token);
+    memcpy(&data.mqtt_password, token, sizeof(token));
+
+    token = strsep(&strPtr, "\n");
+    if ( token != nullptr ) {
+        // could be empty
+        ESP_LOGI("test", "Client Id: '%s'", token);
+        memcpy(&data.mqtt_client_id, token, sizeof(token));
+    }
+
+    // TODO: add confirm set
+
+    ESP_LOGI(TAG, "Storing mqtt: %s@%s:%i", data.mqtt_username, data.mqtt_host, data.mqtt_port);
+
+    esp_err_t ret = nvs_set_blob(savedData, "MQTTDATA", &data, sizeof(data));
+    if ( ret != ESP_OK ) {
+        // TODO
+    }
+    ret = nvs_commit(savedData);
+    if ( ret != ESP_OK ) {
+        // TODO
+    }
+
+    // TODO: restart mqtt or reboot?
+}
+
 void setLogLevel(const char *buf)
 {
   esp_log_level_t level = esp_log_level_get("*");
@@ -789,12 +845,46 @@ void printIssuers(__attribute__((unused)) const char *buf)
 
 void wifiCallback()
 {
-  mqtt.host = MQTT_HOST;
-  mqtt.port = MQTT_PORT;
-  mqtt.client_id = MQTT_CLIENTID;
-  mqtt.username = MQTT_USERNAME;
-  mqtt.password = MQTT_PASSWORD;
-  mqtt.begin();
+  const char *TAG = "wifiCallback";
+  size_t len;
+  mqttData_t data;
+
+#ifdef HAS_MQTT
+    if (nvs_get_blob(savedData, "MQTTDATA", nullptr, &len) == ESP_ERR_NVS_NOT_FOUND )
+    {
+        // TODO: should check the lengths of the data before we try to memcpy()
+        memcpy(&data.mqtt_host, MQTT_HOST, sizeof(MQTT_HOST));
+        data.mqtt_port = MQTT_PORT;
+        memcpy(&data.mqtt_client_id, MQTT_CLIENTID, sizeof(MQTT_CLIENTID));
+        memcpy(&data.mqtt_username, MQTT_USERNAME, sizeof(MQTT_USERNAME));
+        memcpy(&data.mqtt_password, MQTT_PASSWORD, sizeof(MQTT_PASSWORD));
+        ESP_LOGI(TAG, "Setting default mqtt to: %s@%s:%i", data.mqtt_username, data.mqtt_host, data.mqtt_port);
+
+        esp_err_t ret = nvs_set_blob(savedData, "MQTTDATA", &data, sizeof(data));
+        if ( ret != ESP_OK ) {
+            // TODO
+        }
+        ret = nvs_commit(savedData);
+        if ( ret != ESP_OK ) {
+            // TODO
+        }
+    }
+#endif
+    if (nvs_get_blob(savedData, "MQTTDATA", nullptr, &len) == ESP_OK )
+    {
+        if ( len != sizeof(mqttData_t)) {
+            // TODO
+        }
+        nvs_get_blob(savedData, "MQTTDATA", &data, &len);
+        ESP_LOGI(TAG, "Found mqtt: %s@%s:%i", data.mqtt_username, data.mqtt_host, data.mqtt_port);
+        mqtt.host = data.mqtt_host;
+        mqtt.port = data.mqtt_port;
+        mqtt.client_id = data.mqtt_client_id;
+        mqtt.username = data.mqtt_username;
+        mqtt.password = data.mqtt_password;
+        mqtt.begin();
+        mqtt_enabled = true;
+    }
 }
 
 void setup()
@@ -827,14 +917,28 @@ void setup()
     ESP_LOGD(TAG, "Issuer ID: %s, Public Key: %s", utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(), utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
   }
   homeSpan.setHostNameSuffix("-homekey");
-  homeSpan.enableOTA();
-  homeSpan.begin(Category::Locks, "Test NFC Lock");
+#ifdef OTA_AUTH
+  homeSpan.enableOTA(OTA_AUTH);
+#endif
+  homeSpan.begin(Category::Locks, DISPLAY_NAME);
+#ifdef WIFI_SSID
+  homeSpan.setWifiCredentials(WIFI_SSID, WIFI_CREDENTIALS);
+#else
+  homeSpan.enableAutoStartAP();
+#endif
+#ifdef PAIRING_CODE
+  homeSpan.setPairingCode(PAIRING_CODE);
+#endif
+  homeSpan.setSerialInputDisable(DISABLE_SERIAL_PORT);
+  homeSpan.setSketchVersion(__DATE__ " " __TIME__);
 
   new SpanUserCommand('D', "Delete NFC Reader Data", deleteReaderData);
   new SpanUserCommand('L', "Set Log Level", setLogLevel);
   new SpanUserCommand('F', "Set HomeKey Flow", setFlow);
   new SpanUserCommand('I', "Add dummy Issuers and endpoints", insertDummyIssuers);
-  new SpanUserCommand('P', "Print Issuers", print_issuers);
+  new SpanUserCommand('P', "Print Issuers", printIssuers);
+  new SpanUserCommand('M', "Set MQTT Configuration", setMqttConfiguration);
+  // TODO: print MQTT configuration command
 
   nfc.begin();
 
@@ -860,6 +964,7 @@ void setup()
   new Characteristic::Name("NFC Lock");
   new Characteristic::SerialNumber();
   new Characteristic::FirmwareRevision();
+  // TODO: support setting hardware finish
   new Characteristic::HardwareFinish();
 
   new LockManagement();

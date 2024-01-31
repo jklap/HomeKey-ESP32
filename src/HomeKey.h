@@ -209,3 +209,12 @@ namespace homeKeyReader
     j.at("issuers").get_to(p.issuers);
   }
 }
+
+struct mqttData_t
+{
+    char mqtt_host[65] = {};
+    uint16_t mqtt_port = 0;
+    char mqtt_client_id[65] = {};
+    char mqtt_username[65] = {};
+    char mqtt_password[65] = {};
+};
