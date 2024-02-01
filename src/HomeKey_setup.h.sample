@@ -2,6 +2,7 @@
 #define HOMEKEY_ESP32_HOMEKEY_SETUP_H
 
 #define DISPLAY_NAME "Test NFC Lock"
+//#define HOSTNAME_SUFFIX "-homekey"
 
 // define the HomeKit pairing code (default here is the HomeSpan default)
 // if undefined will use the HomeSpan default
