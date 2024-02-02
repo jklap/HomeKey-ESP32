@@ -39,13 +39,18 @@ bool defaultToStd = false;
 
 bool save_to_nvs()
 {
+  const char *TAG = "save_to_nvs";
   json serializedData = readerData;
   auto msgpack = json::to_msgpack(serializedData);
   esp_err_t set_nvs = nvs_set_blob(savedData, "READERDATA", msgpack.data(), msgpack.size());
+  ESP_LOGV(TAG, "NVS SET STATUS: %s", esp_err_to_name(set_nvs));
+  if ( set_nvs != ESP_OK ) {
+      ESP_LOGE(TAG, "Failed to set blob");
+      return false;
+  }
   esp_err_t commit_nvs = nvs_commit(savedData);
-  ESP_LOGV("save_to_nvs", "NVS SET STATUS: %s", esp_err_to_name(set_nvs));
-  ESP_LOGV("save_to_nvs", "NVS COMMIT STATUS: %s", esp_err_to_name(commit_nvs));
-  return !set_nvs && !commit_nvs;
+  ESP_LOGV(TAG, "NVS COMMIT STATUS: %s", esp_err_to_name(commit_nvs));
+  return commit_nvs == ESP_OK;
 }
 
 struct LockManagement : Service::LockManagement
@@ -920,7 +925,18 @@ void setup()
   homeSpan.setHostNameSuffix(HOSTNAME_SUFFIX);
 #endif
 #ifdef OTA_AUTH
-  homeSpan.enableOTA(OTA_AUTH);
+    nvs_handle otaNVS;
+    // see HomeSpan.cpp for specifics on this NVS data
+    nvs_open("OTA",NVS_READONLY,&otaNVS);
+    if ( nvs_get_str(otaNVS, "OTADATA", nullptr, &len) == ESP_ERR_NOT_FOUND ) {
+        // no OTA password set in NVS so use the compile time default
+        ESP_LOGD(TAG, "Using compile-time OTA password");
+        homeSpan.enableOTA(OTA_AUTH);
+    } else {
+        // looks like there is an OTA password set in NVS so we'll let OTA use that
+        homeSpan.enableOTA();
+    }
+    nvs_close(otaNVS);
 #endif
   homeSpan.begin(Category::Locks, DISPLAY_NAME);
 #ifdef WIFI_SSID
