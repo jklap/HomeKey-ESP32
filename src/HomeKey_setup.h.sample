@@ -2,6 +2,9 @@
 #define HOMEKEY_ESP32_HOMEKEY_SETUP_H
 
 #define DISPLAY_NAME "Test NFC Lock"
+// see HomeKey.h for the 4 finishes
+#define HARDWARE_FINISH HARDWARE_FINISH_BLACK
+
 //#define HOSTNAME_SUFFIX "-homekey"
 
 // define the HomeKit pairing code (default here is the HomeSpan default)

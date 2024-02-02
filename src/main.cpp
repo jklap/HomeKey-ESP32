@@ -982,8 +982,7 @@ void setup()
   new Characteristic::Name("NFC Lock");
   new Characteristic::SerialNumber();
   new Characteristic::FirmwareRevision();
-  // TODO: support setting hardware finish
-  new Characteristic::HardwareFinish();
+  new Characteristic::HardwareFinish(HARDWARE_FINISH);
 
   new LockManagement();
   new LockMechanism();

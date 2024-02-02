@@ -9,6 +9,11 @@ using namespace nlohmann::json_literals;
 using namespace nlohmann::literals::json_literals;
 using namespace nlohmann;
 
+#define HARDWARE_FINISH_BLACK "AQQAAAAA"
+#define HARDWARE_FINISH_TAN "AQTO1doA"
+#define HARDWARE_FINISH_GOLD "AQSq1uwA"
+#define HARDWARE_FINISH_SILVER "AQTj4+MA"
+
 typedef enum
 {
   kTLVType1_Operation = 0x01,
