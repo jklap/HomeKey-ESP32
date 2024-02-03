@@ -14,6 +14,7 @@
 #include <mbedtls/asn1write.h>
 #include <sstream>
 #include <PicoMQTT.h>
+#include <ESPmDNS.h>
 
 #include "HomeKey_setup.h"
 
@@ -21,6 +22,7 @@ using namespace nlohmann;
 
 PicoMQTT::Client mqtt;
 bool mqtt_enabled = false;
+mqttTopics_t mqtt_topics;
 
 #ifdef PN532_USES_SPI
 #include <SPI.h>
@@ -66,7 +68,6 @@ struct LockManagement : Service::LockManagement
 
     lockControlPoint = new Characteristic::LockControlPoint();
     version = new Characteristic::Version();
-
   } // end constructor
 
 }; // end LockManagement
@@ -88,12 +89,6 @@ void crc16a(const unsigned char *data, unsigned int size, unsigned char *result)
   result[1] = static_cast<unsigned char>((w_crc >> 8) & 0xFF);
 }
 
-// Function to append CRC16 to data
-void with_crc16(unsigned char *data, unsigned int size, unsigned char *result)
-{
-  crc16a(data, size, result);
-}
-
 struct LockMechanism : Service::LockMechanism
 {
   SpanCharacteristic *lockCurrentState;
@@ -107,28 +102,34 @@ struct LockMechanism : Service::LockMechanism
     lockCurrentState = new Characteristic::LockCurrentState(1, true);
     lockTargetState = new Characteristic::LockTargetState(1, true);
     if ( mqtt_enabled ) {
-        mqtt.subscribe(
-                MQTT_SET_STATE_TOPIC, [this](const char *payload) {
-                    ESP_LOGD(TAG, "Received message in topic set_state: %s", payload);
-                    int state = atoi(payload);
-                    lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
-                    lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
-                },
-                false);
-        mqtt.subscribe(
-                MQTT_SET_TARGET_STATE_TOPIC, [this](const char *payload) {
-                    ESP_LOGD(TAG, "Received message in topic set_target_state: %s", payload);
-                    int state = atoi(payload);
-                    lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
-                },
-                false);
-        mqtt.subscribe(
-                MQTT_SET_CURRENT_STATE_TOPIC, [this](const char *payload) {
-                    ESP_LOGD(TAG, "Received message in topic set_current_state: %s", payload);
-                    int state = atoi(payload);
-                    lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
-                },
-                false);
+        if ( mqtt_topics.set_state_topic != nullptr ) {
+            mqtt.subscribe(
+                    mqtt_topics.set_state_topic, [this](const char *payload) {
+                        ESP_LOGD(TAG, "Received message in topic set_state: %s", payload);
+                        int state = atoi(payload);
+                        lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
+                        lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
+                    },
+                    false);
+        }
+        if ( mqtt_topics.set_target_topic != nullptr ) {
+            mqtt.subscribe(
+                    mqtt_topics.set_target_topic, [this](const char *payload) {
+                        ESP_LOGD(TAG, "Received message in topic set_target_state: %s", payload);
+                        int state = atoi(payload);
+                        lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
+                    },
+                    false);
+        }
+        if ( mqtt_topics.set_current_topic != nullptr ) {
+            mqtt.subscribe(
+                    mqtt_topics.set_current_topic, [this](const char *payload) {
+                        ESP_LOGD(TAG, "Received message in topic set_current_state: %s", payload);
+                        int state = atoi(payload);
+                        lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
+                    },
+                    false);
+        }
     }
   } // end constructor
 
@@ -138,8 +139,8 @@ struct LockMechanism : Service::LockMechanism
     ESP_LOGI(TAG, "New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
 
     // lockCurrentState->setVal(targetState);
-    if ( mqtt_enabled ) {
-        mqtt.publish(MQTT_STATE_TOPIC, std::to_string(targetState).c_str());
+    if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
+        mqtt.publish(mqtt_topics.state_topic, std::to_string(targetState).c_str());
     }
 
     return (true);
@@ -154,10 +155,10 @@ struct LockMechanism : Service::LockMechanism
     bool passiveTarget = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen, atqa, sak, 1000, true);
     if (passiveTarget)
     {
+      ESP_LOGI(TAG, "*** PASSIVE TARGET DETECTED ***");
       ESP_LOGD(TAG, "ATQA: %s", utils::bufToHexString(atqa, 1).c_str());
       ESP_LOGD(TAG, "SAK: %s", utils::bufToHexString(sak, 1).c_str());
       ESP_LOGD(TAG, "UID: %s", utils::bufToHexString(uid, uidLen).c_str());
-      ESP_LOGI(TAG, "*** PASSIVE TARGET DETECTED ***");
       if (sak[0] == 0x20 && atqa[0] == 0x04)
       {
         unsigned long startTime = millis();
@@ -182,8 +183,8 @@ struct LockMechanism : Service::LockMechanism
               ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", stopTime - startTime);
               int newTargetState = lockTargetState->getNewVal();
               int targetState = lockTargetState->getVal();
-              if ( mqtt_enabled ) {
-                  mqtt.publish(MQTT_STATE_TOPIC, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
+              if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
+                  mqtt.publish(mqtt_topics.state_topic, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
               }
               // lockTargetState->setVal(lockTargetState->getNewVal());
               // lockCurrentState->setVal(lockTargetState->getVal());
@@ -204,8 +205,8 @@ struct LockMechanism : Service::LockMechanism
                 payload["issuerId"] = utils::bufToHexString(foundIssuer->issuerId, 8);
                 payload["endpointId"] = utils::bufToHexString(std::get<0>(auth)->endpointId, 6);
                 payload["homekey"] = true;
-                if ( mqtt_enabled ) {
-                    mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+                if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
+                    mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
                 }
               }
             }
@@ -220,8 +221,8 @@ struct LockMechanism : Service::LockMechanism
                 ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", stopTime - startTime);
                 int newTargetState = lockTargetState->getNewVal();
                 int targetState = lockTargetState->getVal();
-                if ( mqtt_enabled ) {
-                    mqtt.publish(MQTT_STATE_TOPIC, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
+                if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
+                    mqtt.publish(mqtt_topics.state_topic, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
                 }
                 // lockTargetState->setVal(!lockCurrentState->getVal());
                 // lockCurrentState->setVal(lockTargetState->getVal());
@@ -242,8 +243,8 @@ struct LockMechanism : Service::LockMechanism
                   payload["issuerId"] = utils::bufToHexString(foundIssuer->issuerId, 8);
                   payload["endpointId"] = utils::bufToHexString(foundEndpoint->endpointId, 6);
                   payload["homekey"] = true;
-                  if ( mqtt_enabled ) {
-                      mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+                  if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
+                      mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
                   }
                   std::vector<uint8_t> persistentKey = std::get<2>(auth1);
                   memcpy(foundEndpoint->persistent_key, persistentKey.data(), 32);
@@ -267,8 +268,8 @@ struct LockMechanism : Service::LockMechanism
             payload["sak"] = utils::bufToHexString(sak, 1);
             payload["uid"] = utils::bufToHexString(uid, uidLen);
             payload["homekey"] = false;
-            if ( mqtt_enabled ) {
-                mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+            if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
+                mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
             }
           }
         }
@@ -280,8 +281,8 @@ struct LockMechanism : Service::LockMechanism
         payload["sak"] = utils::bufToHexString(sak, 1);
         payload["uid"] = utils::bufToHexString(uid, uidLen);
         payload["homekey"] = false;
-        if ( mqtt_enabled ) {
-            mqtt.publish(MQTT_AUTH_TOPIC, payload.dump().c_str());
+        if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
+            mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
         }
       }
     }
@@ -289,7 +290,7 @@ struct LockMechanism : Service::LockMechanism
     {
       uint8_t data[18] = {0x6A, 0x2, 0xCB, 0x2, 0x6, 0x2, 0x11, 0x0};
       memcpy(data + 8, readerData.reader_identifier, sizeof(readerData.reader_identifier));
-      with_crc16(data, 16, data + 16);
+      crc16a(data, 16, data + 16);
       uint8_t response[64];
       uint8_t length = 64;
       nfc.writeRegister(0x633d, 0);
@@ -693,6 +694,11 @@ void setFlow(const char *buf)
 void setMqttConfiguration(const char *buf) {
     const char *TAG = "setMqttConfiguration";
 
+    if ( strlen(buf) == 1 ) {
+        ESP_LOGW(TAG, "Expected: @M<host>:<port> <username>:<password> [<client_id>]");
+        return;
+    }
+
     // TODO: M<host>:<port> <username>:<password> [<client_id>]
     mqttData_t data;
 
@@ -706,21 +712,21 @@ void setMqttConfiguration(const char *buf) {
     memcpy(&data.mqtt_host, token, sizeof(token));
 
     token = strsep(&strPtr, " ");
-    ESP_LOGI("test", "Port: '%s'", token);
+    ESP_LOGD(TAG, "Port: '%s'", token);
     data.mqtt_port = atoi(token);
 
     token = strsep(&strPtr, ":");
-    ESP_LOGI("test", "Username: '%s'", token);
+    ESP_LOGD(TAG, "Username: '%s'", token);
     memcpy(&data.mqtt_username, token, sizeof(token));
 
     token = strsep(&strPtr, " ");
-    ESP_LOGI("test", "Password: '%s'", token);
+    ESP_LOGD(TAG, "Password: '%s'", token);
     memcpy(&data.mqtt_password, token, sizeof(token));
 
     token = strsep(&strPtr, "\n");
     if ( token != nullptr ) {
         // could be empty
-        ESP_LOGI("test", "Client Id: '%s'", token);
+        ESP_LOGI(TAG, "Client Id: '%s'", token);
         memcpy(&data.mqtt_client_id, token, sizeof(token));
     }
 
@@ -780,12 +786,10 @@ void insertDummyIssuers(const char *buf)
   mbedtls_ctr_drbg_init(&drbg);
   mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
   std::stringstream strVal;
-  strVal << buf[1];
-  unsigned int iterations;
-  strVal >> iterations;
+  unsigned int iterations = atoi(&buf[1]);
   if (iterations > 64)
   {
-    ESP_LOGI(TAG, "Invalid Argument");
+    ESP_LOGW(TAG, "Invalid Argument: @I<num> (where num <= 64)");
     return;
   }
   for (size_t i = 0; i < iterations; i++)
@@ -840,12 +844,30 @@ void printIssuers(__attribute__((unused)) const char *buf)
   ESP_LOGI(TAG, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
   for (auto &issuer : readerData.issuers)
   {
-    ESP_LOGD(TAG, "Issuer ID: %s, Public Key: %s", utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(), utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
+    ESP_LOGI(TAG, "Issuer ID: %s, Public Key: %s",
+             utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(),
+             utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
     for (auto &endpoint : issuer.endpoints)
     {
-      ESP_LOGD(TAG, "Endpoint ID: %s, Public Key: %s", utils::bufToHexString(endpoint.endpointId, sizeof(endpoint.endpointId)).c_str(), utils::bufToHexString(endpoint.publicKey, sizeof(endpoint.publicKey)).c_str());
+      ESP_LOGI(TAG, "    Endpoint ID: %s, Public Key: %s",
+               utils::bufToHexString(endpoint.endpointId, sizeof(endpoint.endpointId)).c_str(),
+               utils::bufToHexString(endpoint.publicKey, sizeof(endpoint.publicKey)).c_str());
     }
   }
+}
+
+// stolen from Span::checkConnect() so we generate our Home Assistant unique ID the same as the MDNS name
+char *get_unique_id() {
+    char id[18];                              // create string version of Accessory ID for MDNS broadcast
+    memcpy(id,HAPClient::accessory.ID,17);    // copy ID bytes
+    id[17]='\0';                              // add terminating null
+
+    int nChars=snprintf(nullptr,0,"%.2s%.2s%.2s%.2s%.2s%.2s",id,id+3,id+6,id+9,id+12,id+15);
+
+    char str_id[nChars+1];
+    sprintf(str_id,"%.2s%.2s%.2s%.2s%.2s%.2s",id,id+3,id+6,id+9,id+12,id+15);
+
+    return strdup(str_id);
 }
 
 void wifiCallback()
@@ -854,7 +876,7 @@ void wifiCallback()
   size_t len;
   mqttData_t data;
 
-#ifdef HAS_MQTT
+#ifdef MQTT_HOST
     if (nvs_get_blob(savedData, "MQTTDATA", nullptr, &len) == ESP_ERR_NVS_NOT_FOUND )
     {
         // TODO: should check the lengths of the data before we try to memcpy()
@@ -887,8 +909,80 @@ void wifiCallback()
         mqtt.client_id = data.mqtt_client_id;
         mqtt.username = data.mqtt_username;
         mqtt.password = data.mqtt_password;
+
+        char *unique_id = get_unique_id();
+        asprintf(&mqtt_topics.prefix, MQTT_PREFIX, unique_id);
+        // TODO: state topic is optional if we are only sending auth messages
+        asprintf(&mqtt_topics.state_topic, MQTT_STATE_TOPIC, unique_id);
+        ESP_LOGD(TAG, "State topic: %s", mqtt_topics.state_topic);
+#ifdef MQTT_AUTH_TOPIC
+        asprintf(&mqtt_topics.auth_topic, MQTT_AUTH_TOPIC, unique_id);
+#endif
+#ifdef MQTT_SET_STATE_TOPIC
+        asprintf(&mqtt_topics.set_state_topic, MQTT_SET_STATE_TOPIC, unique_id);
+#endif
+#ifdef MQTT_SET_CURRENT_STATE_TOPIC
+        asprintf(&mqtt_topics.set_current_topic, MQTT_SET_CURRENT_STATE_TOPIC, unique_id);
+#endif
+#ifdef MQTT_SET_TARGET_STATE_TOPIC
+        asprintf(&mqtt_topics.set_target_topic, MQTT_SET_TARGET_STATE_TOPIC, unique_id);
+#endif
+
+#ifdef HA_DISCOVERY_PREFIX
+        // set up a last will message on the broker
+        mqtt.will.topic = mqtt_topics.prefix;
+        mqtt.will.payload = "offline";
+        mqtt.will.qos = 1;
+        mqtt.will.retain = true;
+
+        // set up a connection callback to update our availability topic
+        mqtt.connected_callback = [] {
+            mqtt.publish(mqtt_topics.prefix, "online");
+        };
+#endif
+
         mqtt.begin();
         mqtt_enabled = true;
+
+#ifdef HA_DISCOVERY_PREFIX
+        ESP_LOGI(TAG, "Enabling HomeAssistant discovery");
+
+        // let mqtt get some time to make any needed connections to the broker
+        mqtt.loop();
+
+        // TODO: Lock control topic?
+        // TODO: is this lock device valid if we are only sending auth messages?
+        const char *config_json = R"END({
+"name":null,
+"dev_cla":"lock",
+"stat_t":"%s",
+"pl_on":"1",
+"pl_off":"0",
+"avty_t":"%s",
+"pl_avail":"online",
+"pl_not_avail":"offline",
+"uniq_id":"state%s",
+"dev":{
+ "ids":["%s"],
+ "name":"%s",
+ "sw":"%s"
+}
+})END";
+
+        char *message;
+        asprintf(&message, config_json,
+                 mqtt_topics.state_topic, mqtt_topics.prefix,
+                 unique_id, unique_id,
+                 DISPLAY_NAME, __DATE__ " " __TIME__);
+        char *topic;
+        asprintf(&topic, "%s/binary_sensor/%s/config", HA_DISCOVERY_PREFIX, unique_id);
+        ESP_LOGD(TAG, "topic: %s", topic);
+        ESP_LOGD(TAG, "message: %s", message);
+        mqtt.publish(topic, message);
+        free(message);
+        free(topic);
+#endif
+        free(unique_id);
     }
 }
 
@@ -957,6 +1051,8 @@ void setup()
   new SpanUserCommand('P', "Print Issuers", printIssuers);
   new SpanUserCommand('M', "Set MQTT Configuration", setMqttConfiguration);
   // TODO: print MQTT configuration command
+  // TODO: move topic configuration to NVS
+  // TODO: move HA configuration to NVS
 
   nfc.begin();
 

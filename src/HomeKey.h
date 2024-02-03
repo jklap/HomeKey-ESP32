@@ -16,6 +16,20 @@ using namespace nlohmann;
 
 typedef enum
 {
+    Current_Unsecured = 0,
+    Current_Secured = 1,
+    Current_Jammed = 2,
+    Current_Unknown = 3
+} Lock_Current_States;
+
+typedef enum
+{
+    Target_Unsecured = 0,
+    Target_Secured = 1
+} Lock_Target_States;
+
+typedef enum
+{
   kTLVType1_Operation = 0x01,
   kTLVType1_Device_Credential_Request = 0x04,
   kTLVType1_Device_Credential_Response = 0x05,
@@ -222,4 +236,14 @@ struct mqttData_t
     char mqtt_client_id[65] = {};
     char mqtt_username[65] = {};
     char mqtt_password[65] = {};
+};
+
+struct mqttTopics_t
+{
+    char *prefix = nullptr;
+    char *auth_topic = nullptr;
+    char *set_state_topic = nullptr;
+    char *state_topic = nullptr;
+    char *set_target_topic = nullptr;
+    char *set_current_topic = nullptr;
 };

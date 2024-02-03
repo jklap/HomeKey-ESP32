@@ -5,6 +5,7 @@
 // see HomeKey.h for the 4 finishes
 #define HARDWARE_FINISH HARDWARE_FINISH_BLACK
 
+// by default the hostname will be a combination of "HomeSpan-" plus a representation of the accessory ID
 //#define HOSTNAME_SUFFIX "-homekey"
 
 // define the HomeKit pairing code (default here is the HomeSpan default)
@@ -26,7 +27,7 @@
 #endif
 
 // defining MQTT host, username, password sets the defaults but a user is still allowed to configure via CLI
-// NOT defining this will not start MQTT until the user has configured it via the CLI
+// NOT defining MQTT_HOST will not start MQTT until the user has configured it via the CLI
 //#define MQTT_HOST "192.168.1.10"
 //#define MQTT_PORT 1883
 //#define MQTT_CLIENTID "homekey_mqtt"
@@ -34,14 +35,18 @@
 //#define MQTT_PASSWORD "<your_mqtt_password>"
 
 // following is not configurable during runtime
-#define MQTT_PREFIX "homekey"
+// "%s" in any of the topic strings will be replaced with the accessory ID
+#define MQTT_PREFIX "homekey/%s"
+#define MQTT_STATE_TOPIC MQTT_PREFIX "/state"
 
+// if any of thesse topics are undefined, they will not be used/created (such as if you don't want to enable lock control)
 #define MQTT_AUTH_TOPIC MQTT_PREFIX "/auth"
 #define MQTT_SET_STATE_TOPIC MQTT_PREFIX "/set_state"
-#define MQTT_STATE_TOPIC MQTT_PREFIX "/state"
 #define MQTT_SET_TARGET_STATE_TOPIC MQTT_PREFIX "/set_target_state"
 #define MQTT_SET_CURRENT_STATE_TOPIC MQTT_PREFIX "/set_current_state"
 
+// define if you want to send discovery and availability messages to HomeAssistant
+#define HA_DISCOVERY_PREFIX "homeassistant"
 
 // Note: if WIFI_SSID is not set then the device will start a Wifi AP on first boot
 //#define WIFI_SSID "<your_network_ssid>"
