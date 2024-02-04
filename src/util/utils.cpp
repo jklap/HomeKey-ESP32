@@ -135,3 +135,20 @@ std::vector<unsigned char> utils::simple_tlv(unsigned char tag, const unsigned c
   }
   return std::vector<uint8_t>{};
 }
+
+// Function to calculate CRC16
+void utils::crc16a(const unsigned char *data, unsigned int size, unsigned char *result)
+{
+    unsigned short w_crc = 0x6363;
+
+    for (unsigned int i = 0; i < size; ++i)
+    {
+        unsigned char byte = data[i];
+        byte = (byte ^ (w_crc & 0x00FF));
+        byte = ((byte ^ (byte << 4)) & 0xFF);
+        w_crc = ((w_crc >> 8) ^ (byte << 8) ^ (byte << 3) ^ (byte >> 4)) & 0xFFFF;
+    }
+
+    result[0] = static_cast<unsigned char>(w_crc & 0xFF);
+    result[1] = static_cast<unsigned char>((w_crc >> 8) & 0xFF);
+}

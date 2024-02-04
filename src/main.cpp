@@ -17,6 +17,7 @@
 #include <ESPmDNS.h>
 
 #include "HomeKey_setup.h"
+#include "span_commands.h"
 
 using namespace nlohmann;
 
@@ -71,23 +72,6 @@ struct LockManagement : Service::LockManagement
   } // end constructor
 
 }; // end LockManagement
-
-// Function to calculate CRC16
-void crc16a(const unsigned char *data, unsigned int size, unsigned char *result)
-{
-  unsigned short w_crc = 0x6363;
-
-  for (unsigned int i = 0; i < size; ++i)
-  {
-    unsigned char byte = data[i];
-    byte = (byte ^ (w_crc & 0x00FF));
-    byte = ((byte ^ (byte << 4)) & 0xFF);
-    w_crc = ((w_crc >> 8) ^ (byte << 8) ^ (byte << 3) ^ (byte >> 4)) & 0xFFFF;
-  }
-
-  result[0] = static_cast<unsigned char>(w_crc & 0xFF);
-  result[1] = static_cast<unsigned char>((w_crc >> 8) & 0xFF);
-}
 
 struct LockMechanism : Service::LockMechanism
 {
@@ -156,9 +140,11 @@ struct LockMechanism : Service::LockMechanism
     if (passiveTarget)
     {
       ESP_LOGI(TAG, "*** PASSIVE TARGET DETECTED ***");
-      ESP_LOGD(TAG, "ATQA: %s", utils::bufToHexString(atqa, 1).c_str());
-      ESP_LOGD(TAG, "SAK: %s", utils::bufToHexString(sak, 1).c_str());
-      ESP_LOGD(TAG, "UID: %s", utils::bufToHexString(uid, uidLen).c_str());
+      ESP_LOGD(TAG, "ATQA: %s SAK: %s UID: %s",
+               utils::bufToHexString(atqa, 1).c_str(),
+               utils::bufToHexString(sak, 1).c_str(),
+               utils::bufToHexString(uid, uidLen).c_str()
+      );
       if (sak[0] == 0x20 && atqa[0] == 0x04)
       {
         unsigned long startTime = millis();
@@ -290,7 +276,7 @@ struct LockMechanism : Service::LockMechanism
     {
       uint8_t data[18] = {0x6A, 0x2, 0xCB, 0x2, 0x6, 0x2, 0x11, 0x0};
       memcpy(data + 8, readerData.reader_identifier, sizeof(readerData.reader_identifier));
-      crc16a(data, 16, data + 16);
+      utils::crc16a(data, 16, data + 16);
       uint8_t response[64];
       uint8_t length = 64;
       nfc.writeRegister(0x633d, 0);
@@ -647,215 +633,6 @@ struct NFCAccess : Service::NFCAccess
 
 //////////////////////////////////////
 
-void deleteReaderData(__attribute__((unused)) const char *buf)
-{
-  const char *TAG = "deleteReaderData";
-  readerData.issuers.clear();
-  std::fill(readerData.identifier, readerData.identifier + 8, 0);
-  std::fill(readerData.reader_identifier, readerData.reader_identifier + 8, 0);
-  std::fill(readerData.reader_private_key, readerData.reader_private_key + 32, 0);
-  esp_err_t erase_nvs = nvs_erase_key(savedData, "READERDATA");
-  esp_err_t commit_nvs = nvs_commit(savedData);
-  ESP_LOGI(TAG, "*** NVS W STATUS");
-  ESP_LOGI(TAG, "ERASE: %s", esp_err_to_name(erase_nvs));
-  ESP_LOGI(TAG, "COMMIT: %s", esp_err_to_name(commit_nvs));
-  ESP_LOGI(TAG, "*** NVS W STATUS");
-}
-
-void pairCallback(bool isPaired)
-{
-  if (!isPaired && HAPClient::nAdminControllers() == 0)
-  {
-    deleteReaderData(nullptr);
-  }
-}
-
-void setFlow(const char *buf)
-{
-  const char *TAG = "setFlow";
-  switch (buf[1])
-  {
-  case '0':
-    defaultToStd = false;
-    ESP_LOGI(TAG, "FAST Flow");
-    break;
-
-  case '1':
-    defaultToStd = true;
-    ESP_LOGI(TAG, "STANDARD Flow");
-    break;
-
-  default:
-    ESP_LOGI(TAG, "0 = FAST flow, 1 = STANDARD Flow");
-    break;
-  }
-}
-
-void setMqttConfiguration(const char *buf) {
-    const char *TAG = "setMqttConfiguration";
-
-    if ( strlen(buf) == 1 ) {
-        ESP_LOGW(TAG, "Expected: @M<host>:<port> <username>:<password> [<client_id>]");
-        return;
-    }
-
-    // TODO: M<host>:<port> <username>:<password> [<client_id>]
-    mqttData_t data;
-
-    char *strPtr = const_cast<char *>(buf);
-    char *token;
-
-    strPtr++; // skip the command character
-
-    token = strsep(&strPtr, ":");
-    ESP_LOGD(TAG, "Name: '%s'", token);
-    memcpy(&data.mqtt_host, token, sizeof(token));
-
-    token = strsep(&strPtr, " ");
-    ESP_LOGD(TAG, "Port: '%s'", token);
-    data.mqtt_port = atoi(token);
-
-    token = strsep(&strPtr, ":");
-    ESP_LOGD(TAG, "Username: '%s'", token);
-    memcpy(&data.mqtt_username, token, sizeof(token));
-
-    token = strsep(&strPtr, " ");
-    ESP_LOGD(TAG, "Password: '%s'", token);
-    memcpy(&data.mqtt_password, token, sizeof(token));
-
-    token = strsep(&strPtr, "\n");
-    if ( token != nullptr ) {
-        // could be empty
-        ESP_LOGI(TAG, "Client Id: '%s'", token);
-        memcpy(&data.mqtt_client_id, token, sizeof(token));
-    }
-
-    // TODO: add confirm set
-
-    ESP_LOGI(TAG, "Storing mqtt: %s@%s:%i", data.mqtt_username, data.mqtt_host, data.mqtt_port);
-
-    esp_err_t ret = nvs_set_blob(savedData, "MQTTDATA", &data, sizeof(data));
-    if ( ret != ESP_OK ) {
-        // TODO
-    }
-    ret = nvs_commit(savedData);
-    if ( ret != ESP_OK ) {
-        // TODO
-    }
-
-    // TODO: restart mqtt or reboot?
-}
-
-void setLogLevel(const char *buf)
-{
-    const char *TAG = "setLogLevel";
-    esp_log_level_t level = esp_log_level_get("*");
-
-    switch (buf[1]) {
-        case 'E':
-            level = ESP_LOG_ERROR;
-            break;
-        case 'W':
-            level = ESP_LOG_WARN;
-            break;
-        case 'I':
-            level = ESP_LOG_INFO;
-            break;
-        case 'D':
-            level = ESP_LOG_DEBUG;
-            break;
-        case 'V':
-            level = ESP_LOG_VERBOSE;
-            break;
-        case 'N':
-            level = ESP_LOG_NONE;
-            break;
-        default:
-            ESP_LOGI(TAG, "Unknown log level: '%c' (should be one of 'E', 'W', 'I', 'D', 'V', 'N')", buf[1]);
-    }
-    ESP_LOGI(TAG, "Log level set to %i", level);
-  esp_log_level_set("*", level);
-}
-
-void insertDummyIssuers(const char *buf)
-{
-  const char *TAG = "insertDummyIssuers";
-  mbedtls_entropy_context entropy;
-  mbedtls_entropy_init(&entropy);
-  mbedtls_ctr_drbg_context drbg;
-  mbedtls_ctr_drbg_init(&drbg);
-  mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
-  std::stringstream strVal;
-  unsigned int iterations = atoi(&buf[1]);
-  if (iterations > 64)
-  {
-    ESP_LOGW(TAG, "Invalid Argument: @I<num> (where num <= 64)");
-    return;
-  }
-  for (size_t i = 0; i < iterations; i++)
-  {
-    mbedtls_ecp_keypair ephemeral;
-    mbedtls_ecp_keypair_init(&ephemeral);
-    mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, &ephemeral, mbedtls_ctr_drbg_random, &drbg);
-    std::vector<uint8_t> bufPub;
-    bufPub.resize(MBEDTLS_ECP_MAX_BYTES);
-    bufPub.reserve(MBEDTLS_ECP_MAX_BYTES);
-    size_t olen = 0;
-    mbedtls_ecp_point_write_binary(&ephemeral.grp, &ephemeral.Q, MBEDTLS_ECP_PF_UNCOMPRESSED, &olen, bufPub.data(), bufPub.capacity());
-    bufPub.resize(olen);
-    mbedtls_ecp_keypair_free(&ephemeral);
-
-    size_t buffer_size_x = mbedtls_mpi_size(&ephemeral.Q.X);
-    std::vector<uint8_t> X;
-    X.resize(buffer_size_x);
-    X.reserve(buffer_size_x);
-    mbedtls_mpi_write_binary(&ephemeral.Q.X, X.data(), buffer_size_x);
-
-    Issuers::homeKeyIssuers_t issuer;
-    memcpy(issuer.issuerId, utils::getHashIdentifier(bufPub.data(), 32, true).data(), 8);
-    memcpy(issuer.issuer_key_x, X.data(), X.size());
-    memcpy(issuer.publicKey, bufPub.data(), bufPub.size());
-    issuerEndpoint::issuerEndpoint_t endpoint;
-    endpoint.counter = 0;
-    memcpy(endpoint.endpoint_key_x, X.data(), X.size());
-    memcpy(endpoint.endpointId, utils::getHashIdentifier(bufPub.data(), 32, false).data(), 6);
-    endpoint.key_type = 0;
-    endpoint.last_used_at = 0;
-    endpoint.enrollments.attestation.payload.resize(64);
-    endpoint.enrollments.attestation.unixTime = 0;
-    endpoint.enrollments.hap.payload.resize(64);
-    endpoint.enrollments.hap.unixTime = 0;
-    esp_fill_random(endpoint.persistent_key, 32);
-    memcpy(endpoint.publicKey, bufPub.data(), bufPub.size());
-    issuer.endpoints.emplace_back(endpoint);
-    issuer.endpoints.emplace_back(endpoint);
-    issuer.endpoints.emplace_back(endpoint);
-    issuer.endpoints.emplace_back(endpoint);
-
-    readerData.issuers.emplace_front(issuer);
-  }
-  mbedtls_entropy_free(&entropy);
-  mbedtls_ctr_drbg_free(&drbg);
-}
-
-void printIssuers(__attribute__((unused)) const char *buf)
-{
-  const char *TAG = "printIssuers";
-  ESP_LOGI(TAG, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
-  for (auto &issuer : readerData.issuers)
-  {
-    ESP_LOGI(TAG, "Issuer ID: %s, Public Key: %s",
-             utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(),
-             utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
-    for (auto &endpoint : issuer.endpoints)
-    {
-      ESP_LOGI(TAG, "    Endpoint ID: %s, Public Key: %s",
-               utils::bufToHexString(endpoint.endpointId, sizeof(endpoint.endpointId)).c_str(),
-               utils::bufToHexString(endpoint.publicKey, sizeof(endpoint.publicKey)).c_str());
-    }
-  }
-}
-
 // stolen from Span::checkConnect() so we generate our Home Assistant unique ID the same as the MDNS name
 char *get_unique_id() {
     char id[18];                              // create string version of Accessory ID for MDNS broadcast
@@ -956,8 +733,8 @@ void wifiCallback()
 "name":null,
 "dev_cla":"lock",
 "stat_t":"%s",
-"pl_on":"1",
-"pl_off":"0",
+"pl_on":"0",
+"pl_off":"1",
 "avty_t":"%s",
 "pl_avail":"online",
 "pl_not_avail":"offline",
