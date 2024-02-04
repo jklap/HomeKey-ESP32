@@ -149,9 +149,9 @@ struct LockMechanism : Service::LockMechanism
       {
         unsigned long startTime = millis();
         uint8_t data[13] = {0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00, 0x08, 0x58, 0x01, 0x01, 0x0};
+        ESP_LOGD(TAG, "SELECT HomeKey Applet, APDU: %s", utils::bufToHexString(data, sizeof(data)).c_str());
         uint8_t selectCmdRes[32];
         uint8_t selectCmdResLength = 32;
-        ESP_LOGD(TAG, "SELECT HomeKey Applet, APDU: %s", utils::bufToHexString(data, sizeof(data)).c_str());
         bool exchange = nfc.inDataExchange(data, sizeof(data), selectCmdRes, &selectCmdResLength);
         ESP_LOGD(TAG, "SELECT HomeKey Applet, Response: %s, Length: %d", utils::bufToHexString(selectCmdRes, selectCmdResLength).c_str(), selectCmdResLength);
         if (exchange)
@@ -159,42 +159,14 @@ struct LockMechanism : Service::LockMechanism
           if (selectCmdRes[selectCmdResLength - 2] == 0x90 && selectCmdRes[selectCmdResLength - 1] == 0x00)
           {
             ESP_LOGI(TAG, "*** SELECT HOMEKEY APPLET SUCCESSFUL ***");
-            ESP_LOGD(TAG, "Reader Private Key: %s", utils::bufToHexString((const uint8_t *)readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
+            ESP_LOGD(TAG, "Reader Private Key: %s",
+                     utils::bufToHexString((const uint8_t *)readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
             AuthenticationContext flow(&nfc, &readerData);
             auto auth = flow.fast_auth(defaultToStd);
             if (std::get<0>(auth) != nullptr && std::get<1>(auth) != homeKeyReader::kFlowFailed)
             {
-              unsigned long stopTime = millis();
-              ESP_LOGI(TAG, "Transaction took %lu ms", stopTime - startTime);
-              ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", stopTime - startTime);
-              int newTargetState = lockTargetState->getNewVal();
-              int targetState = lockTargetState->getVal();
-              if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
-                  mqtt.publish(mqtt_topics.state_topic, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
-              }
-              // lockTargetState->setVal(lockTargetState->getNewVal());
-              // lockCurrentState->setVal(lockTargetState->getVal());
-              json payload;
-              Issuers::homeKeyIssuers_t *foundIssuer = nullptr;
-              for (auto &&issuer : readerData.issuers)
-              {
-                for (auto &&endpoint : issuer.endpoints)
-                {
-                  if (&endpoint == std::get<0>(auth))
-                  {
-                    foundIssuer = &issuer;
-                  }
-                }
-              }
-              if (foundIssuer != nullptr)
-              {
-                payload["issuerId"] = utils::bufToHexString(foundIssuer->issuerId, 8);
-                payload["endpointId"] = utils::bufToHexString(std::get<0>(auth)->endpointId, 6);
-                payload["homekey"] = true;
-                if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
-                    mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
-                }
-              }
+              ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", millis() - startTime);
+              handle_auth(std::get<0>(auth));
             }
             else if (std::get<1>(auth) != homeKeyReader::kFlowFailed)
             {
@@ -202,77 +174,32 @@ struct LockMechanism : Service::LockMechanism
               issuerEndpoint::issuerEndpoint_t *foundEndpoint = std::get<0>(auth1);
               if (foundEndpoint != nullptr && std::get<3>(auth1) == homeKeyReader::kFlowSTANDARD)
               {
-                delete std::get<1>(auth1);
-                unsigned long stopTime = millis();
-                ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", stopTime - startTime);
-                int newTargetState = lockTargetState->getNewVal();
-                int targetState = lockTargetState->getVal();
-                if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
-                    mqtt.publish(mqtt_topics.state_topic, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
-                }
-                // lockTargetState->setVal(!lockCurrentState->getVal());
-                // lockCurrentState->setVal(lockTargetState->getVal());
-                json payload;
-                Issuers::homeKeyIssuers_t *foundIssuer = nullptr;
-                for (auto &&issuer : readerData.issuers)
-                {
-                  for (auto &&endpoint : issuer.endpoints)
-                  {
-                    if (&endpoint == foundEndpoint)
-                    {
-                      foundIssuer = &issuer;
-                    }
-                  }
-                }
-                if (foundIssuer != nullptr)
-                {
-                  payload["issuerId"] = utils::bufToHexString(foundIssuer->issuerId, 8);
-                  payload["endpointId"] = utils::bufToHexString(foundEndpoint->endpointId, 6);
-                  payload["homekey"] = true;
-                  if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
-                      mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
-                  }
+                ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", millis() - startTime);
+                if ( handle_auth(foundEndpoint) ) {
                   std::vector<uint8_t> persistentKey = std::get<2>(auth1);
                   memcpy(foundEndpoint->persistent_key, persistentKey.data(), 32);
                   save_to_nvs();
                 }
               }
-              else
-              {
-                delete std::get<1>(auth1);
-              }
+              delete std::get<1>(auth1);
             }
             else
             {
               ESP_LOGW(TAG, "Authentication Failed, lock state not changed");
             }
           }
-          else
+          else // select applet not successful
           {
-            json payload;
-            payload["atqa"] = utils::bufToHexString(atqa, 1);
-            payload["sak"] = utils::bufToHexString(sak, 1);
-            payload["uid"] = utils::bufToHexString(uid, uidLen);
-            payload["homekey"] = false;
-            if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
-                mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
-            }
+            publish_passive(atqa, sak, uid, uidLen);
           }
         }
       }
-      else
+      else // not a homekey response
       {
-        json payload;
-        payload["atqa"] = utils::bufToHexString(atqa, 1);
-        payload["sak"] = utils::bufToHexString(sak, 1);
-        payload["uid"] = utils::bufToHexString(uid, uidLen);
-        payload["homekey"] = false;
-        if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
-            mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
-        }
+        publish_passive(atqa, sak, uid, uidLen);
       }
     }
-    else
+    else // no passiveTarget
     {
       uint8_t data[18] = {0x6A, 0x2, 0xCB, 0x2, 0x6, 0x2, 0x11, 0x0};
       memcpy(data + 8, readerData.reader_identifier, sizeof(readerData.reader_identifier));
@@ -284,6 +211,63 @@ struct LockMechanism : Service::LockMechanism
     }
   } // end loop
 
+  bool handle_auth(issuerEndpoint::issuerEndpoint_t *foundEndpoint) const {
+      publish_auth_state();
+
+      Issuers::homeKeyIssuers_t *foundIssuer = find_issuer(foundEndpoint);
+      if (foundIssuer != nullptr)
+      {
+          publish_auth(foundIssuer, foundEndpoint);
+          return true;
+      }
+      return false;
+  }
+
+  void publish_auth_state() const {
+      int newTargetState = lockTargetState->getNewVal();
+      int targetState = lockTargetState->getVal();
+      // lockTargetState->setVal(!lockCurrentState->getVal());
+      // lockCurrentState->setVal(lockTargetState->getVal());
+
+      if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
+          mqtt.publish(mqtt_topics.state_topic, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
+      }
+  }
+
+  static Issuers::homeKeyIssuers_t *find_issuer(issuerEndpoint::issuerEndpoint_t *foundEndpoint) {
+      for (auto &&issuer : readerData.issuers)
+      {
+          for (auto &&endpoint : issuer.endpoints)
+          {
+              if (&endpoint == foundEndpoint)
+              {
+                  return &issuer;
+              }
+          }
+      }
+      return nullptr;
+  }
+
+  static void publish_passive(uint16_t *atqa, uint8_t *sak, uint8_t *uid, uint8_t uidLen) {
+      json payload;
+      payload["atqa"] = utils::bufToHexString(atqa, 1);
+      payload["sak"] = utils::bufToHexString(sak, 1);
+      payload["uid"] = utils::bufToHexString(uid, uidLen);
+      payload["homekey"] = false;
+      if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
+          mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
+      }
+  }
+
+  static void publish_auth(Issuers::homeKeyIssuers_t *foundIssuer, issuerEndpoint::issuerEndpoint_t *foundEndpoint) {
+      json payload;
+      payload["issuerId"] = utils::bufToHexString(foundIssuer->issuerId, 8);
+      payload["endpointId"] = utils::bufToHexString(foundEndpoint->endpointId, 6);
+      payload["homekey"] = true;
+      if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
+          mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
+      }
+  }
 }; // end LockMechanism
 
 struct NFCAccess : Service::NFCAccess
