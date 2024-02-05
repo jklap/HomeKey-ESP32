@@ -177,11 +177,11 @@ void insertDummyIssuers(const char *buf)
         X.reserve(buffer_size_x);
         mbedtls_mpi_write_binary(&ephemeral.Q.X, X.data(), buffer_size_x);
 
-        Issuers::homeKeyIssuers_t issuer;
+        homeKeyIssuer::issuer_t issuer;
         memcpy(issuer.issuerId, utils::getHashIdentifier(bufPub.data(), 32, true).data(), 8);
         memcpy(issuer.issuer_key_x, X.data(), X.size());
         memcpy(issuer.publicKey, bufPub.data(), bufPub.size());
-        issuerEndpoint::issuerEndpoint_t endpoint;
+        homeKeyEndpoint::endpoint_t endpoint;
         endpoint.counter = 0;
         memcpy(endpoint.endpoint_key_x, X.data(), X.size());
         memcpy(endpoint.endpointId, utils::getHashIdentifier(bufPub.data(), 32, false).data(), 6);

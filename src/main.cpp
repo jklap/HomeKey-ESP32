@@ -145,6 +145,8 @@ struct LockMechanism : Service::LockMechanism
                utils::bufToHexString(sak, 1).c_str(),
                utils::bufToHexString(uid, uidLen).c_str()
       );
+
+      // TODO: remove this filter? If we can't select the homekey applet next it's not a HomeKey?
       if (sak[0] == 0x20 && atqa[0] == 0x04)
       {
         unsigned long startTime = millis();
@@ -161,42 +163,37 @@ struct LockMechanism : Service::LockMechanism
             ESP_LOGI(TAG, "*** SELECT HOMEKEY APPLET SUCCESSFUL ***");
             ESP_LOGD(TAG, "Reader Private Key: %s",
                      utils::bufToHexString((const uint8_t *)readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
-            AuthenticationContext flow(&nfc, &readerData);
-            auto auth = flow.fast_auth(defaultToStd);
-            if (std::get<0>(auth) != nullptr && std::get<1>(auth) != homeKeyReader::kFlowFailed)
+
+            HKAuthenticationContext authCtx(nfc, readerData);
+            auto authResult = authCtx.authenticate(defaultToStd, savedData);
+            if (std::get<2>(authResult) != homeKeyReader::kFlowFailed)
             {
-              ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", millis() - startTime);
-              handle_auth(std::get<0>(auth));
+                publish_auth_state();
+                publish_auth(std::get<0>(authResult), std::get<1>(authResult));
+                ESP_LOGI(TAG, "Total time: %lu ms", millis() - startTime);
             }
-            else if (std::get<1>(auth) != homeKeyReader::kFlowFailed)
+            else // failed flow
             {
-              auto auth1 = flow.std_auth();
-              issuerEndpoint::issuerEndpoint_t *foundEndpoint = std::get<0>(auth1);
-              if (foundEndpoint != nullptr && std::get<3>(auth1) == homeKeyReader::kFlowSTANDARD)
-              {
-                ESP_LOGI(TAG, "Device has been authenticated, transaction took %lu ms", millis() - startTime);
-                if ( handle_auth(foundEndpoint) ) {
-                  std::vector<uint8_t> persistentKey = std::get<2>(auth1);
-                  memcpy(foundEndpoint->persistent_key, persistentKey.data(), 32);
-                  save_to_nvs();
-                }
-              }
-              delete std::get<1>(auth1);
-            }
-            else
-            {
-              ESP_LOGW(TAG, "Authentication Failed, lock state not changed");
+                ESP_LOGI(TAG, "failed flow");
             }
           }
-          else // select applet not successful
+          else // applet select failed
           {
-            publish_passive(atqa, sak, uid, uidLen);
+              publish_passive(atqa, sak, uid, uidLen);
           }
         }
+        bool deviceStillInField = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen);
+        while (deviceStillInField)
+        {
+          nfc.inRelease();
+          vTaskDelay(100 / portTICK_PERIOD_MS);
+          deviceStillInField = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen);
+        }
+        //nfc.inRelease();
       }
-      else // not a homekey response
+      else // not a homekey?
       {
-        publish_passive(atqa, sak, uid, uidLen);
+          ESP_LOGI(TAG, "Not a homekey?");
       }
     }
     else // no passiveTarget
@@ -207,21 +204,9 @@ struct LockMechanism : Service::LockMechanism
       uint8_t response[64];
       uint8_t length = 64;
       nfc.writeRegister(0x633d, 0);
-      nfc.inCommunicateThru(data, sizeof(data), response, &length, 1000);
+      nfc.inCommunicateThru(data, sizeof(data), response, &length, 100);
     }
   } // end loop
-
-  bool handle_auth(issuerEndpoint::issuerEndpoint_t *foundEndpoint) const {
-      publish_auth_state();
-
-      Issuers::homeKeyIssuers_t *foundIssuer = find_issuer(foundEndpoint);
-      if (foundIssuer != nullptr)
-      {
-          publish_auth(foundIssuer, foundEndpoint);
-          return true;
-      }
-      return false;
-  }
 
   void publish_auth_state() const {
       int newTargetState = lockTargetState->getNewVal();
@@ -232,20 +217,6 @@ struct LockMechanism : Service::LockMechanism
       if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
           mqtt.publish(mqtt_topics.state_topic, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
       }
-  }
-
-  static Issuers::homeKeyIssuers_t *find_issuer(issuerEndpoint::issuerEndpoint_t *foundEndpoint) {
-      for (auto &&issuer : readerData.issuers)
-      {
-          for (auto &&endpoint : issuer.endpoints)
-          {
-              if (&endpoint == foundEndpoint)
-              {
-                  return &issuer;
-              }
-          }
-      }
-      return nullptr;
   }
 
   static void publish_passive(uint16_t *atqa, uint8_t *sak, uint8_t *uid, uint8_t uidLen) {
@@ -259,10 +230,10 @@ struct LockMechanism : Service::LockMechanism
       }
   }
 
-  static void publish_auth(Issuers::homeKeyIssuers_t *foundIssuer, issuerEndpoint::issuerEndpoint_t *foundEndpoint) {
+  static void publish_auth(uint8_t *issuerId, uint8_t *endpointId) {
       json payload;
-      payload["issuerId"] = utils::bufToHexString(foundIssuer->issuerId, 8);
-      payload["endpointId"] = utils::bufToHexString(foundEndpoint->endpointId, 6);
+      payload["issuerId"] = utils::bufToHexString(issuerId, 8);
+      payload["endpointId"] = utils::bufToHexString(endpointId, 6);
       payload["homekey"] = true;
       if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
           mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
@@ -270,7 +241,7 @@ struct LockMechanism : Service::LockMechanism
   }
 }; // end LockMechanism
 
-struct NFCAccess : Service::NFCAccess
+struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
 {
   SpanCharacteristic *configurationState;
   SpanCharacteristic *nfcControlPoint;
@@ -285,25 +256,6 @@ struct NFCAccess : Service::NFCAccess
     nfcControlPoint = new Characteristic::NFCAccessControlPoint();
     nfcSupportedConfiguration = new Characteristic::NFCAccessSupportedConfiguration();
   } // end constructor
-  std::vector<uint8_t> get_x(std::vector<uint8_t> pubKey) const
-  {
-    mbedtls_ecp_group grp;
-    mbedtls_ecp_point point;
-    mbedtls_ecp_point_init(&point);
-    mbedtls_ecp_group_init(&grp);
-    mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_SECP256R1);
-    int ret = mbedtls_ecp_point_read_binary(&grp, &point, pubKey.data(), pubKey.size());
-    ESP_LOGV(TAG, "mbedtls_ecp_point_read_binary status: %d", ret);
-    size_t buffer_size_x = mbedtls_mpi_size(&point.X);
-    std::vector<uint8_t> X;
-    X.resize(buffer_size_x);
-    X.reserve(buffer_size_x);
-    mbedtls_mpi_write_binary(&point.X, X.data(), buffer_size_x);
-    ESP_LOGV(TAG, "PublicKey: %s, X Coordinate: %s", utils::bufToHexString(pubKey.data(), pubKey.size()).c_str(), utils::bufToHexString(X.data(), X.size()).c_str());
-    mbedtls_ecp_group_free(&grp);
-    mbedtls_ecp_point_free(&point);
-    return X;
-  }
   std::tuple<uint8_t *, int> provision_device_cred(uint8_t *buf, size_t len)
   {
     for (size_t i = 0; i < 16; i++)
@@ -312,7 +264,7 @@ struct NFCAccess : Service::NFCAccess
       {
         std::vector<uint8_t> id = utils::getHashIdentifier(HAPClient::controllers[i].LTPK, 32, true);
         ESP_LOGD(TAG, "Found allocated controller - ID: %s", utils::bufToHexString(id.data(), 8).c_str());
-        Issuers::homeKeyIssuers_t *foundIssuer = nullptr;
+        homeKeyIssuer::issuer_t *foundIssuer = nullptr;
         for (auto &issuer : readerData.issuers)
         {
           if (!memcmp(issuer.issuerId, id.data(), 8))
@@ -325,7 +277,7 @@ struct NFCAccess : Service::NFCAccess
         if (foundIssuer == nullptr)
         {
           ESP_LOGD(TAG, "Adding new issuer - ID: %s", utils::bufToHexString(id.data(), 8).c_str());
-          Issuers::homeKeyIssuers_t issuer;
+          homeKeyIssuer::issuer_t issuer;
           memcpy(issuer.issuerId, id.data(), 8);
           memcpy(issuer.publicKey, HAPClient::controllers[i].LTPK, 32);
           readerData.issuers.emplace_back(issuer);
@@ -342,7 +294,7 @@ struct NFCAccess : Service::NFCAccess
 
     ESP_LOGV(TAG, "DCR TLV DECODE STATE: %d", tlv8.unpack(buf, len));
     tlv8.print(1);
-    Issuers::homeKeyIssuers_t *foundIssuer = nullptr;
+    homeKeyIssuer::issuer_t *foundIssuer = nullptr;
     for (auto &issuer : readerData.issuers)
     {
       if (!memcmp(issuer.issuerId, tlv8.buf(kDevice_Req_Issuer_Key_Identifier), 8))
@@ -353,7 +305,7 @@ struct NFCAccess : Service::NFCAccess
     }
     if (foundIssuer != nullptr)
     {
-      issuerEndpoint::issuerEndpoint_t *foundEndpoint = nullptr;
+      homeKeyEndpoint::endpoint_t *foundEndpoint = nullptr;
       uint8_t endEphPubKey[tlv8.len(kDevice_Req_Public_Key) + 1] = {0x04};
       memcpy(endEphPubKey + 1, tlv8.buf(kDevice_Req_Public_Key), tlv8.len(kDevice_Req_Public_Key));
       std::vector<uint8_t> endpointId = utils::getHashIdentifier(endEphPubKey, sizeof(endEphPubKey), false);
@@ -368,14 +320,14 @@ struct NFCAccess : Service::NFCAccess
       if (foundEndpoint == nullptr)
       {
         ESP_LOGD(TAG, "Adding new endpoint - ID: %s , PublicKey: %s", utils::bufToHexString(endpointId.data(), 6).c_str(), utils::bufToHexString(endEphPubKey, sizeof(endEphPubKey)).c_str());
-        issuerEndpoint::issuerEndpoint_t endpoint;
+        homeKeyEndpoint::endpoint_t endpoint;
         endpointEnrollment::enrollment_t enrollment;
         enrollment.unixTime = std::time(nullptr);
         uint8_t encoded[128];
         size_t olen = 0;
         mbedtls_base64_encode(encoded, 128, &olen, buf, len);
         enrollment.payload.insert(enrollment.payload.begin(), encoded, encoded + olen);
-        std::vector<uint8_t> x_coordinate = get_x(std::vector<uint8_t>(endEphPubKey, endEphPubKey + sizeof(endEphPubKey)));
+        std::vector<uint8_t> x_coordinate = get_x(endEphPubKey, sizeof(endEphPubKey));
 
         endpoint.counter = 0;
         endpoint.key_type = tlv8.buf(kDevice_Req_Key_Type)[0];
@@ -406,37 +358,6 @@ struct NFCAccess : Service::NFCAccess
     return std::make_tuple(readerData.reader_identifier, homeKeyReader::DOES_NOT_EXIST);
   }
 
-  static std::vector<uint8_t> getPublicKey(uint8_t *privKey, size_t len)
-  {
-    mbedtls_ecp_keypair keypair;
-    mbedtls_ecp_keypair_init(&keypair);
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
-
-    int ret = mbedtls_ecp_read_key(MBEDTLS_ECP_DP_SECP256R1, &keypair, privKey, len);
-    if ( ret != 0 ) {
-        // TODO
-    }
-    ret = mbedtls_ecp_mul(&keypair.grp, &keypair.Q, &keypair.d, &keypair.grp.G, mbedtls_ctr_drbg_random, &ctr_drbg);
-    if ( ret != 0 ) {
-        // TODO
-    }
-
-    size_t olenPub = 0;
-    std::vector<uint8_t> readerPublicKey(MBEDTLS_ECP_MAX_BYTES);
-    mbedtls_ecp_point_write_binary(&keypair.grp, &keypair.Q, MBEDTLS_ECP_PF_UNCOMPRESSED, &olenPub, readerPublicKey.data(), readerPublicKey.capacity());
-    readerPublicKey.resize(olenPub);
-
-    // Cleanup
-    mbedtls_ecp_keypair_free(&keypair);
-    mbedtls_entropy_free(&entropy);
-    mbedtls_ctr_drbg_free(&ctr_drbg);
-    return readerPublicKey;
-  }
-
   int set_reader_key(uint8_t *buf, size_t len)
   {
     ESP_LOGD(TAG, "Setting reader key: %s", utils::bufToHexString(buf, len).c_str());
@@ -455,7 +376,7 @@ struct NFCAccess : Service::NFCAccess
     ESP_LOGD(TAG, "UniqueIdentifier: %s", utils::bufToHexString(uniqueIdentifier, tlv8.len(kReader_Req_Identifier)).c_str());
     std::vector<uint8_t> pubKey = getPublicKey(readerKey, tlv8.len(kReader_Req_Reader_Private_Key));
     ESP_LOGD(TAG, "Got reader public key: %s", utils::bufToHexString(pubKey.data(), pubKey.size()).c_str());
-    std::vector<uint8_t> x_coordinate = get_x(pubKey);
+    std::vector<uint8_t> x_coordinate = get_x(pubKey.data(), pubKey.size());
     ESP_LOGD(TAG, "Got X coordinate: %s", utils::bufToHexString(x_coordinate.data(), x_coordinate.size()).c_str());
     memcpy(readerData.reader_key_x, x_coordinate.data(), x_coordinate.size());
     memcpy(readerData.reader_public_key, pubKey.data(), pubKey.size());
@@ -805,7 +726,7 @@ void setup()
   homeSpan.setSerialInputDisable(DISABLE_SERIAL_PORT);
   homeSpan.setSketchVersion(__DATE__ " " __TIME__);
 
-  new SpanUserCommand('D', "Delete NFC Reader Data", deleteReaderData);
+  new SpanUserCommand('D', "Delete Home Key Data", deleteReaderData);
   new SpanUserCommand('L', "Set Log Level", setLogLevel);
   new SpanUserCommand('F', "Set HomeKey Flow", setFlow);
   new SpanUserCommand('I', "Add dummy Issuers and endpoints", insertDummyIssuers);
