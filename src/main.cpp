@@ -150,7 +150,9 @@ struct LockMechanism : Service::LockMechanism
       if (sak[0] == 0x20 && atqa[0] == 0x04)
       {
         unsigned long startTime = millis();
-        uint8_t data[13] = {0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00, 0x08, 0x58, 0x01, 0x01, 0x0};
+        uint8_t data[13] = {0x00, 0xA4, 0x04, 0x00, 0x07,
+                            0xA0, 0x00, 0x00, 0x08, 0x58, 0x01, 0x01,
+                            0x0};
         ESP_LOGD(TAG, "SELECT HomeKey Applet, APDU: %s", utils::bufToHexString(data, sizeof(data)).c_str());
         uint8_t selectCmdRes[32];
         uint8_t selectCmdResLength = 32;

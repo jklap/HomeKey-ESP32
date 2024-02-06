@@ -289,14 +289,12 @@ std::tuple<homeKeyIssuer::issuer_t *, homeKeyEndpoint::endpoint_t *, homeKeyRead
   std::vector<uint8_t> fastTlv(sizeof(prot_v_data) + readerEphPubKey.size() + transactionIdentifier.size() + readerIdentifier.size() + 8);
   size_t len = 0;
   utils::simple_tlv(0x5C, prot_v_data, sizeof(prot_v_data), fastTlv.data(), &len);
-
   utils::simple_tlv(0x87, readerEphPubKey.data(), readerEphPubKey.size(), fastTlv.data() + len, &len);
-
   utils::simple_tlv(0x4C, transactionIdentifier.data(), transactionIdentifier.size(), fastTlv.data() + len, &len);
-
   utils::simple_tlv(0x4D, readerIdentifier.data(), readerIdentifier.size(), fastTlv.data() + len, &len);
   std::vector<uint8_t> apdu{0x80, 0x80, 0x01, 0x01, (uint8_t)len};
   apdu.insert(apdu.begin() + 5, fastTlv.begin(), fastTlv.end());
+
   uint8_t response[128];
   uint8_t responseLength = 128;
   ESP_LOGD(TAG, "Auth0 APDU Length: %d, DATA: %s", apdu.size(), utils::bufToHexString(apdu.data(), apdu.size()).c_str());
@@ -317,9 +315,9 @@ std::tuple<homeKeyIssuer::issuer_t *, homeKeyEndpoint::endpoint_t *, homeKeyRead
     }
     else
     {
-          auto foundData = find_endpoint_by_cryptogram(encryptedMessage.value);
-          endpoint = std::get<1>(foundData);
-          issuer = std::get<0>(foundData);
+      auto foundData = find_endpoint_by_cryptogram(encryptedMessage.value);
+      endpoint = std::get<1>(foundData);
+      issuer = std::get<0>(foundData);
 
       if (endpoint != nullptr)
       {
@@ -368,10 +366,11 @@ std::tuple<homeKeyIssuer::issuer_t *, homeKeyEndpoint::endpoint_t *, DigitalKeyS
   utils::simple_tlv(0x87, readerEphX.data(), readerEphX.size(), stdTlv.data() + len, &len);
   utils::simple_tlv(0x4C, transactionIdentifier.data(), 16, stdTlv.data() + len, &len);
   utils::simple_tlv(0x93, readerCtx, 4, stdTlv.data() + len, &len);
-   auto sigTlv = signSharedInfo(stdTlv.data(), len, readerData.reader_private_key, sizeof(readerData.reader_private_key));
+  auto sigTlv = signSharedInfo(stdTlv.data(), len, readerData.reader_private_key, sizeof(readerData.reader_private_key));
   std::vector<uint8_t> apdu{0x80, 0x81, 0x0, 0x0, (uint8_t)sigTlv.size()};
   apdu.resize(apdu.size() + sigTlv.size());
   std::move(sigTlv.begin(), sigTlv.end(), apdu.begin() + 5);
+
   uint8_t response[128];
   uint8_t responseLength = 128;
   ESP_LOGD(TAG, "Auth1 APDU Length: %d, DATA: %s", apdu.size(), utils::bufToHexString(apdu.data(), apdu.size()).c_str());
