@@ -91,7 +91,6 @@ struct LockManagement : Service::LockManagement
   LockManagement() : Service::LockManagement()
   {
     ESP_LOGI(TAG, "Configuring LockManagement"); // initialization message
-    new Characteristic::Name("Lock Management");
 
     lockControlPoint = new Characteristic::LockControlPoint();
     version = new Characteristic::Version();
@@ -108,7 +107,6 @@ struct LockMechanism : Service::LockMechanism
   LockMechanism() : Service::LockMechanism()
   {
     ESP_LOGI(TAG, "Configuring LockMechanism"); // initialization message
-    new Characteristic::Name("NFC Lock");
     lockCurrentState = new Characteristic::LockCurrentState(1, true);
     lockTargetState = new Characteristic::LockTargetState(1, true);
     if ( mqtt_enabled ) {
@@ -220,6 +218,7 @@ struct LockMechanism : Service::LockMechanism
               publish_passive(atqa, sak, uid, uidLen);
           }
         }
+        nfc.inRelease();
         bool deviceStillInField = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLen);
         while (deviceStillInField)
         {
@@ -294,7 +293,6 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
   NFCAccess() : Service::NFCAccess()
   {
     ESP_LOGI(TAG, "Configuring NFCAccess"); // initialization message
-    new Characteristic::Name("NFC Access");
     configurationState = new Characteristic::ConfigurationState();
     nfcControlPoint = new Characteristic::NFCAccessControlPoint();
     nfcSupportedConfiguration = new Characteristic::NFCAccessSupportedConfiguration();

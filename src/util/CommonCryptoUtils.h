@@ -1,6 +1,3 @@
-#ifndef HOMEKEY_ESP32_COMMONCRYPTOUTILS_H
-#define HOMEKEY_ESP32_COMMONCRYPTOUTILS_H
-
 #pragma once
 #include <vector>
 #include <tuple>
@@ -19,16 +16,15 @@
 class CommonCryptoUtils
 {
 private:
-    const char *TAG = "CCUtils";
+  const char *TAG = "CCUtils";
 
 public:
-    CommonCryptoUtils();
-    std::tuple<std::vector<uint8_t>, std::vector<uint8_t>> generateEphemeralKey();
-    std::vector<uint8_t> signSharedInfo(uint8_t *stdTlv, size_t len, uint8_t *privateKey, size_t keyLen);
-    std::vector<uint8_t> get_x(std::vector<uint8_t> &pubKey);
-    std::vector<uint8_t> get_x(uint8_t *pubKey, size_t len);
-    std::vector<uint8_t> getPublicKey(uint8_t *privKey, size_t len);
-    static int esp_rng(void *, uint8_t *buf, size_t len);
+  CommonCryptoUtils();
+  void get_shared_key(const std::vector<uint8_t> &key1, const std::vector<uint8_t> &key2, uint8_t *outBuf, size_t oLen);
+  std::tuple<std::vector<uint8_t>, std::vector<uint8_t>> generateEphemeralKey();
+  std::vector<uint8_t> signSharedInfo(const uint8_t *data, const size_t len, const uint8_t *privateKey, const size_t keyLen);
+  std::vector<uint8_t> get_x(std::vector<uint8_t> &pubKey);
+  std::vector<uint8_t> get_x(uint8_t *pubKey, size_t len);
+  std::vector<uint8_t> getPublicKey(uint8_t *privKey, size_t len);
+  static int esp_rng(void *, uint8_t *buf, size_t len);
 };
-
-#endif //HOMEKEY_ESP32_COMMONCRYPTOUTILS_H
