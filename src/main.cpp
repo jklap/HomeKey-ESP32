@@ -140,6 +140,15 @@ struct LockMechanism : Service::LockMechanism
                     },
                     false);
         }
+#ifdef HA_DISCOVERY_PREFIX
+        mqtt.subscribe(HA_DISCOVERY_PREFIX "/status", [this](const char *payload) {
+            ESP_LOGD(TAG, "Received '%s' from HA", payload);
+            if ( strcmp(payload, "online") == 0 ) {
+                mqtt.publish(mqtt_topics.prefix, "online");
+                publish_lock_state();
+            }
+        }, false);
+#endif
     }
   } // end constructor
 
