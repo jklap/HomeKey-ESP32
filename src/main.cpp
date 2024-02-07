@@ -40,6 +40,32 @@ nvs_handle savedData;
 homeKeyReader::readerData_t readerData;
 bool defaultToStd = false;
 
+#ifdef RELAY_PIN
+#define RELAY_PIN_SEL (1ULL << RELAY_PIN)
+static TickType_t next = 0;
+const TickType_t period = RELAY_PERIOD / portTICK_PERIOD_MS;
+
+static void close_relay(void *arg) {
+    TickType_t now = xTaskGetTickCount();
+    if ( now > next ) {
+        gpio_set_level(RELAY_PIN, 1);
+    }
+    next = now + period;
+}
+
+static void open_relay(void *arg) {
+    while ( true ) {
+        TickType_t now = xTaskGetTickCount();
+        if ( now > next ) {
+            gpio_set_level(RELAY_PIN, 0);
+            vTaskDelay(period);
+        } else {
+            vTaskDelay(next - now);
+        }
+    }
+}
+#endif // RELAY_PIN
+
 bool save_to_nvs()
 {
   const char *TAG = "save_to_nvs";
@@ -170,7 +196,7 @@ struct LockMechanism : Service::LockMechanism
             auto authResult = authCtx.authenticate(defaultToStd, savedData);
             if (std::get<2>(authResult) != homeKeyReader::kFlowFailed)
             {
-                publish_auth_state();
+                publish_lock_state();
                 publish_auth(std::get<0>(authResult), std::get<1>(authResult));
                 ESP_LOGI(TAG, "Total time: %lu ms", millis() - startTime);
             }
@@ -181,6 +207,7 @@ struct LockMechanism : Service::LockMechanism
           }
           else // applet select failed
           {
+              // possible not a HomeKey device
               publish_passive(atqa, sak, uid, uidLen);
           }
         }
@@ -195,11 +222,12 @@ struct LockMechanism : Service::LockMechanism
       }
       else // not a homekey?
       {
-          ESP_LOGI(TAG, "Not a homekey?");
+          ESP_LOGI(TAG, "Not a HomeKey?");
       }
     }
     else // no passiveTarget
     {
+      // ECP frame
       uint8_t data[18] = {0x6A, 0x2, 0xCB, 0x2, 0x6, 0x2, 0x11, 0x0};
       memcpy(data + 8, readerData.reader_identifier, sizeof(readerData.reader_identifier));
       utils::crc16a(data, 16, data + 16);
@@ -210,7 +238,7 @@ struct LockMechanism : Service::LockMechanism
     }
   } // end loop
 
-  void publish_auth_state() const {
+  void publish_lock_state() const {
       int newTargetState = lockTargetState->getNewVal();
       int targetState = lockTargetState->getVal();
       // lockTargetState->setVal(!lockCurrentState->getVal());
@@ -219,6 +247,10 @@ struct LockMechanism : Service::LockMechanism
       if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
           mqtt.publish(mqtt_topics.state_topic, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
       }
+#ifdef RELAY_PIN
+      // TODO: needs review
+      close_relay(nullptr);
+#endif
   }
 
   static void publish_passive(uint16_t *atqa, uint8_t *sak, uint8_t *uid, uint8_t uidLen) {
@@ -258,6 +290,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
     nfcControlPoint = new Characteristic::NFCAccessControlPoint();
     nfcSupportedConfiguration = new Characteristic::NFCAccessSupportedConfiguration();
   } // end constructor
+
   std::tuple<uint8_t *, int> provision_device_cred(uint8_t *buf, size_t len)
   {
     for (size_t i = 0; i < 16; i++)
@@ -428,20 +461,23 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
           TLV<Reader_Key_Response, 2> readerKeyResTlv;
           readerKeyResTlv.create(kReader_Res_Key_Identifier, 8, "KEY.IDENTIFIER");
           memcpy(readerKeyResTlv.buf(kReader_Res_Key_Identifier, 8), readerData.reader_identifier, 8);
-          size_t lenSubTlv = readerKeyResTlv.pack(nullptr);
+          int lenSubTlv = readerKeyResTlv.pack(nullptr);
           uint8_t subTlv[lenSubTlv];
           readerKeyResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
           readerKeyResTlv.clear();
           readerKeyResTlv.create(kReader_Res_Reader_Key_Response, lenSubTlv, "READER.RESPONSE");
           memcpy(readerKeyResTlv.buf(kReader_Res_Reader_Key_Response, lenSubTlv), subTlv, lenSubTlv);
-          size_t lenTlv = readerKeyResTlv.pack(nullptr);
+          int lenTlv = readerKeyResTlv.pack(nullptr);
           uint8_t tlv[lenTlv];
           readerKeyResTlv.pack(tlv);
           ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
           mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
           uint8_t resB64[out_len + 1];
           int ret = mbedtls_base64_encode(resB64, sizeof(resB64), &out_len, tlv, lenTlv);
+          if ( ret != 0 ) {
+            ESP_LOGW(TAG, "Failure in mbedtls_base64_encode (%i)", ret);
+          }
           resB64[out_len] = '\0';
           ESP_LOGD(TAG, "B64 ENC STATUS: %d", ret);
           ESP_LOGI(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
@@ -462,20 +498,23 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
           TLV<Reader_Key_Response, 2> readerKeyResTlv;
           readerKeyResTlv.create(kReader_Res_Status, 1, "STATUS");
           readerKeyResTlv.val(kReader_Res_Status, 0);
-          size_t lenSubTlv = readerKeyResTlv.pack(nullptr);
+          int lenSubTlv = readerKeyResTlv.pack(nullptr);
           uint8_t subTlv[lenSubTlv];
           readerKeyResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
           readerKeyResTlv.clear();
           readerKeyResTlv.create(kReader_Res_Reader_Key_Response, lenSubTlv, "READER.RESPONSE");
           memcpy(readerKeyResTlv.buf(kReader_Res_Reader_Key_Response, lenSubTlv), subTlv, lenSubTlv);
-          size_t lenTlv = readerKeyResTlv.pack(nullptr);
+          int lenTlv = readerKeyResTlv.pack(nullptr);
           uint8_t tlv[lenTlv];
           readerKeyResTlv.pack(tlv);
           ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
           mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
           unsigned char resB64[out_len + 1];
-          int ret = mbedtls_base64_encode(resB64, out_len, &out_len, tlv, lenTlv);
+          ret = mbedtls_base64_encode(resB64, out_len, &out_len, tlv, lenTlv);
+          if ( ret != 0 ) {
+              ESP_LOGW(TAG, "Failure in mbedtls_base64_encode (%i)", ret);
+          }
           resB64[out_len] = '\0';
           ESP_LOGD(TAG, "B64 ENC STATUS: %d", ret);
           ESP_LOGI(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
@@ -495,7 +534,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
           devCredResTlv.create(kDevice_Res_Status, 1, "STATUS");
           memcpy(devCredResTlv.buf(kDevice_Res_Issuer_Key_Identifier, 8), std::get<0>(state), 8);
           devCredResTlv.val(kDevice_Res_Status, std::get<1>(state));
-          size_t lenSubTlv = devCredResTlv.pack(nullptr);
+          int lenSubTlv = devCredResTlv.pack(nullptr);
           uint8_t subTlv[lenSubTlv];
           devCredResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
@@ -503,13 +542,16 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
           devCredResTlv.print(1);
           devCredResTlv.create(kDevice_Credential_Response, lenSubTlv, "DEV.RESPONSE");
           memcpy(devCredResTlv.buf(kDevice_Credential_Response, lenSubTlv), subTlv, lenSubTlv);
-          size_t lenTlv = devCredResTlv.pack(nullptr);
+          int lenTlv = devCredResTlv.pack(nullptr);
           uint8_t tlv[lenTlv];
           devCredResTlv.pack(tlv);
           ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
           mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
           unsigned char resB64[out_len + 1];
           int ret = mbedtls_base64_encode(resB64, out_len, &out_len, tlv, lenTlv);
+          if ( ret != 0 ) {
+            ESP_LOGW(TAG, "Failure in mbedtls_base64_encode (%i)", ret);
+          }
           resB64[out_len] = '\0';
           ESP_LOGD(TAG, "B64 ENC STATUS: %d", ret);
           ESP_LOGI(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
@@ -573,11 +615,11 @@ void wifiCallback()
 
         esp_err_t ret = nvs_set_blob(savedData, "MQTTDATA", &data, sizeof(data));
         if ( ret != ESP_OK ) {
-            // TODO
+            ESP_LOGW(TAG, "Failed call to nvs_set_blob (%s)", esp_err_to_name(ret));
         }
         ret = nvs_commit(savedData);
         if ( ret != ESP_OK ) {
-            // TODO
+            ESP_LOGW(TAG, "Failed call to nvs_commit (%s)", esp_err_to_name(ret));
         }
     }
 #endif
@@ -662,7 +704,7 @@ void wifiCallback()
         asprintf(&topic, "%s/binary_sensor/%s/config", HA_DISCOVERY_PREFIX, unique_id);
         ESP_LOGD(TAG, "topic: %s", topic);
         ESP_LOGD(TAG, "message: %s", message);
-        mqtt.publish(topic, message);
+        mqtt.publish(topic, message, 0, true);
         free(message);
         free(topic);
 #endif
@@ -675,6 +717,19 @@ void setup()
   Serial.begin(115200);
   size_t len;
   const char *TAG = "SETUP";
+
+#ifdef RELAY_PIN
+  gpio_config_t relay_conf;
+  relay_conf.mode = GPIO_MODE_OUTPUT;
+  relay_conf.pin_bit_mask = RELAY_PIN_SEL;
+  relay_conf.intr_type = GPIO_INTR_DISABLE;
+  relay_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  relay_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+  gpio_config(&relay_conf);
+
+  xTaskCreate(open_relay, "openrly", configMINIMAL_STACK_SIZE, nullptr, 5, nullptr);
+#endif
+
   nvs_open("SAVED_DATA", NVS_READWRITE, &savedData);
   if (nvs_get_blob(savedData, "READERDATA", nullptr, &len) == ESP_OK )
   {

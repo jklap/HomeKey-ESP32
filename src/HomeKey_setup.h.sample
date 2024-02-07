@@ -48,6 +48,11 @@
 // define if you want to send discovery and availability messages to HomeAssistant
 #define HA_DISCOVERY_PREFIX "homeassistant"
 
+// enable a relay to toggle when the lock is unlocked
+#define RELAY_PIN GPIO_NUM_16
+// reset the relay after a period of time (in ms)
+#define RELAY_PERIOD 1000
+
 // Note: if WIFI_SSID is not set then the device will start a Wifi AP on first boot
 //#define WIFI_SSID "<your_network_ssid>"
 //#define WIFI_CREDENTIALS "<your_network_password>"
