@@ -50,18 +50,18 @@ static void close_relay() {
     TickType_t now = xTaskGetTickCount();
     if ( now > relay_toggle_time ) {
         ESP_LOGI("enable_relay", "Enabling relay");
+        relay_toggle_time = now + period;
         gpio_set_level(RELAY_PIN, 1);
     }
-    relay_toggle_time = now + period;
 }
 
 static void open_relay() {
     TickType_t now = xTaskGetTickCount();
     if ( now > relay_toggle_time ) {
         ESP_LOGI("disable_relay", "Disabling relay");
+        relay_toggle_time = now + period;
         gpio_set_level(RELAY_PIN, 0);
     }
-    relay_toggle_time = now + period;
 }
 #endif // RELAY_PIN
 

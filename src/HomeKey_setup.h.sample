@@ -5,6 +5,16 @@
 // see HomeKey.h for the 4 finishes
 #define HARDWARE_FINISH HARDWARE_FINISH_BLACK
 
+// enable a relay to toggle when the lock is unlocked
+//#define RELAY_PIN GPIO_NUM_16
+#ifdef RELAY_PIN
+    // period of time between relay state changes -- to prevent trashing the lock (in ms)
+    // also used to determine the delay for auto-reset when MOMENTARY_LOCK is defined
+    #define RELAY_PERIOD 1000
+    // is the lock momentary? ie should it reset automatically?
+    #define MOMENTARY_LOCK
+#endif
+
 // by default the hostname will be a combination of "HomeSpan-" plus a representation of the accessory ID
 //#define HOSTNAME_SUFFIX "-homekey"
 
@@ -42,16 +52,12 @@
 // if any of thesse topics are undefined, they will not be used/created (such as if you don't want to enable lock control)
 #define MQTT_AUTH_TOPIC MQTT_PREFIX "/auth"
 #define MQTT_SET_STATE_TOPIC MQTT_PREFIX "/set_state"
+// Note: the following are not used in the case of MOMENTARY_LOCK
 #define MQTT_SET_TARGET_STATE_TOPIC MQTT_PREFIX "/set_target_state"
 #define MQTT_SET_CURRENT_STATE_TOPIC MQTT_PREFIX "/set_current_state"
 
 // define if you want to send discovery and availability messages to HomeAssistant
 #define HA_DISCOVERY_PREFIX "homeassistant"
-
-// enable a relay to toggle when the lock is unlocked
-#define RELAY_PIN GPIO_NUM_16
-// reset the relay after a period of time (in ms)
-#define RELAY_PERIOD 1000
 
 // Note: if WIFI_SSID is not set then the device will start a Wifi AP on first boot
 //#define WIFI_SSID "<your_network_ssid>"
