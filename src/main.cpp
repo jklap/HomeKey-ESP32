@@ -83,15 +83,13 @@ bool save_to_nvs()
 
 struct LockManagement : Service::LockManagement
 {
-  SpanCharacteristic *lockControlPoint;
-  SpanCharacteristic *version;
   const char *TAG = "LockManagement";
 
   LockManagement() : Service::LockManagement()
   {
     ESP_LOGI(TAG, "Configuring LockManagement");
-    lockControlPoint = new Characteristic::LockControlPoint();
-    version = new Characteristic::Version();
+    new Characteristic::LockControlPoint();
+    new Characteristic::Version();
   } // end constructor
 
 }; // end LockManagement
@@ -187,7 +185,7 @@ struct LockMechanism : Service::LockMechanism
                utils::bufToHexString(uid, uidLen).c_str()
       );
 
-      // TODO: remove this filter? If we can't select the homekey applet next it's not a HomeKey?
+      // TODO: remove this filter? If we can't select the HomeKey applet next it's not a HomeKey?
       if (sak[0] == 0x20 && atqa[0] == 0x04)
       {
         unsigned long startTime = millis();
@@ -373,17 +371,15 @@ struct LockMechanism : Service::LockMechanism
 
 struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
 {
-  SpanCharacteristic *configurationState;
   SpanCharacteristic *nfcControlPoint;
-  SpanCharacteristic *nfcSupportedConfiguration;
   const char *TAG = "NFCAccess";
 
   NFCAccess() : Service::NFCAccess()
   {
     ESP_LOGI(TAG, "Configuring NFCAccess");
-    configurationState = new Characteristic::ConfigurationState();
+    new Characteristic::ConfigurationState();
     nfcControlPoint = new Characteristic::NFCAccessControlPoint();
-    nfcSupportedConfiguration = new Characteristic::NFCAccessSupportedConfiguration();
+    new Characteristic::NFCAccessSupportedConfiguration();
   } // end constructor
 
   std::tuple<uint8_t *, int> provision_device_cred(uint8_t *buf, size_t len)
@@ -534,7 +530,6 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
     ESP_LOGD(TAG, "READER GROUP IDENTIFIER: %s", utils::bufToHexString(readerData.reader_identifier, sizeof(readerData.reader_identifier)).c_str());
     ESP_LOGD(TAG, "READER UNIQUE IDENTIFIER: %s", utils::bufToHexString(readerData.identifier, sizeof(readerData.identifier)).c_str());
 
-    char *dataConfState = configurationState->getNewString();
     char *dataNfcControlPoint = nfcControlPoint->getNewString();
     ESP_LOGD(TAG, "NfcControlPoint Length: %d", strlen(dataNfcControlPoint));
     std::vector<uint8_t> decB64 = utils::decodeB64(dataNfcControlPoint);
@@ -542,11 +537,11 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
       return false;
     ESP_LOGD(TAG, "Decoded data: %s", utils::bufToHexString(decB64.data(), decB64.size()).c_str());
     ESP_LOGD(TAG, "Decoded data length: %d", decB64.size());
-    std::vector<BERTLV> tlv = BERTLV::unpack_array(decB64);
-    BERTLV operation = BERTLV::findTag(kTLVType1_Operation, tlv);
+    std::vector<BERTLV> tlvData = BERTLV::unpack_array(decB64);
+    BERTLV operation = BERTLV::findTag(kTLVType1_Operation, tlvData);
     ESP_LOGD(TAG, "Request Operation: %d", operation.value[0]);
-    BERTLV RKR = BERTLV::findTag(kTLVType1_Reader_Key_Request, tlv);
-    BERTLV DCR = BERTLV::findTag(kTLVType1_Device_Credential_Request, tlv);
+    BERTLV RKR = BERTLV::findTag(kTLVType1_Reader_Key_Request, tlvData);
+    BERTLV DCR = BERTLV::findTag(kTLVType1_Device_Credential_Request, tlvData);
     if (operation.value[0] == 1)
     {
       if (!RKR.tag.empty())

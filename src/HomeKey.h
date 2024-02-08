@@ -16,20 +16,8 @@ using namespace nlohmann;
 
 #define UNSECURED 0
 #define SECURED 1
-
-typedef enum
-{
-    Current_Unsecured = 0,
-    Current_Secured = 1,
-    Current_Jammed = 2,
-    Current_Unknown = 3
-} Lock_Current_States;
-
-typedef enum
-{
-    Target_Unsecured = 0,
-    Target_Secured = 1
-} Lock_Target_States;
+#define JAMMED 2
+#define UNKNOWN 3
 
 typedef enum
 {
