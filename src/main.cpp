@@ -39,30 +39,29 @@ PN532 nfc(pn532i2c);
 nvs_handle savedData;
 homeKeyReader::readerData_t readerData;
 bool defaultToStd = false;
+void *lockMechanism;
 
 #ifdef RELAY_PIN
 #define RELAY_PIN_SEL (1ULL << RELAY_PIN)
-static TickType_t next = 0;
+static TickType_t relay_toggle_time = 0;
 const TickType_t period = RELAY_PERIOD / portTICK_PERIOD_MS;
 
-static void close_relay(void *arg) {
+static void close_relay() {
     TickType_t now = xTaskGetTickCount();
-    if ( now > next ) {
+    if ( now > relay_toggle_time ) {
+        ESP_LOGI("enable_relay", "Enabling relay");
         gpio_set_level(RELAY_PIN, 1);
     }
-    next = now + period;
+    relay_toggle_time = now + period;
 }
 
-static void open_relay(void *arg) {
-    while ( true ) {
-        TickType_t now = xTaskGetTickCount();
-        if ( now > next ) {
-            gpio_set_level(RELAY_PIN, 0);
-            vTaskDelay(period);
-        } else {
-            vTaskDelay(next - now);
-        }
+static void open_relay() {
+    TickType_t now = xTaskGetTickCount();
+    if ( now > relay_toggle_time ) {
+        ESP_LOGI("disable_relay", "Disabling relay");
+        gpio_set_level(RELAY_PIN, 0);
     }
+    relay_toggle_time = now + period;
 }
 #endif // RELAY_PIN
 
@@ -107,27 +106,40 @@ struct LockMechanism : Service::LockMechanism
   LockMechanism() : Service::LockMechanism()
   {
     ESP_LOGI(TAG, "Configuring LockMechanism"); // initialization message
-    lockCurrentState = new Characteristic::LockCurrentState(1, true);
-    lockTargetState = new Characteristic::LockTargetState(1, true);
-    if ( mqtt_enabled ) {
-        if ( mqtt_topics.set_state_topic != nullptr ) {
-            mqtt.subscribe(
-                    mqtt_topics.set_state_topic, [this](const char *payload) {
-                        ESP_LOGD(TAG, "Received message in topic set_state: %s", payload);
-                        int state = atoi(payload);
-                        lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
-                        lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
-                    },
-                    false);
-        }
+    lockCurrentState = new Characteristic::LockCurrentState(SECURED, false);
+    lockTargetState = new Characteristic::LockTargetState(SECURED, false);
+    lockMechanism = this;
+  } // end constructor
+
+  void enable_mqtt() {
+      if ( mqtt_enabled ) {
+          if ( mqtt_topics.set_state_topic != nullptr ) {
+              mqtt.subscribe(
+                      mqtt_topics.set_state_topic,
+                      [this](const char *payload) {
+                          ESP_LOGI(TAG, "Received message in topic set_state: %s", payload);
+                          int state = atoi(payload);
+                          switch (state) {
+                              case SECURED:
+                                  lock();
+                                  break;
+                              case UNSECURED:
+                                  unlock();
+                                  break;
+                              default:
+                                  ESP_LOGW(TAG, "Invalid state change: %i", state);
+                          }
+              });
+          }
+#ifndef MOMENTARY_LOCK
         if ( mqtt_topics.set_target_topic != nullptr ) {
             mqtt.subscribe(
                     mqtt_topics.set_target_topic, [this](const char *payload) {
                         ESP_LOGD(TAG, "Received message in topic set_target_state: %s", payload);
                         int state = atoi(payload);
                         lockTargetState->setVal(state == 0 || state == 1 ? state : lockTargetState->getVal());
-                    },
-                    false);
+                        // TODO: call publish or toggle?
+                    });
         }
         if ( mqtt_topics.set_current_topic != nullptr ) {
             mqtt.subscribe(
@@ -135,36 +147,32 @@ struct LockMechanism : Service::LockMechanism
                         ESP_LOGD(TAG, "Received message in topic set_current_state: %s", payload);
                         int state = atoi(payload);
                         lockCurrentState->setVal(state == 0 || state == 1 ? state : lockCurrentState->getVal());
-                    },
-                    false);
+                        // TODO: call publish or toggle?
+                    });
         }
-#ifdef HA_DISCOVERY_PREFIX
-        mqtt.subscribe(HA_DISCOVERY_PREFIX "/status", [this](const char *payload) {
-            ESP_LOGD(TAG, "Received '%s' from HA", payload);
-            if ( strcmp(payload, "online") == 0 ) {
-                mqtt.publish(mqtt_topics.prefix, "online");
-                publish_lock_state();
-            }
-        }, false);
 #endif
-    }
-  } // end constructor
+#ifdef HA_DISCOVERY_PREFIX
+          mqtt.subscribe(HA_DISCOVERY_PREFIX "/status", [this](const char *payload) {
+              ESP_LOGI(TAG, "Received '%s' from HA", payload);
+              if ( strcmp(payload, "online") == 0 ) {
+                  mqtt.publish(mqtt_topics.prefix, "online");
+                  publish_lock_state();
+              }
+          });
+#endif
+      }
+  }
 
   boolean update(std::vector<char> *callback, int *callbackLen) override
   {
-    int targetState = lockTargetState->getNewVal();
-    ESP_LOGI(TAG, "New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
-
-    // lockCurrentState->setVal(targetState);
-    if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
-        mqtt.publish(mqtt_topics.state_topic, std::to_string(targetState).c_str());
-    }
-
-    return (true);
+    set_lock_state();
+    return true;
   }
 
   void loop() override
   {
+    check_lock_state();
+
     uint8_t uid[16];
     uint8_t uidLen = 0;
     uint16_t atqa[1];
@@ -203,7 +211,7 @@ struct LockMechanism : Service::LockMechanism
             auto authResult = authCtx.authenticate(defaultToStd, savedData);
             if (std::get<2>(authResult) != homeKeyReader::kFlowFailed)
             {
-                publish_lock_state();
+                toggle_lock();
                 publish_auth(std::get<0>(authResult), std::get<1>(authResult));
                 ESP_LOGI(TAG, "Total time: %lu ms", millis() - startTime);
             }
@@ -231,6 +239,8 @@ struct LockMechanism : Service::LockMechanism
       else // not a homekey?
       {
           ESP_LOGI(TAG, "Not a HomeKey?");
+#ifdef SEND_PASSIVE
+#endif
       }
     }
     else // no passiveTarget
@@ -246,19 +256,88 @@ struct LockMechanism : Service::LockMechanism
     }
   } // end loop
 
+  void unlock() const {
+      if ( lockCurrentState->getVal() != UNSECURED ) {
+          lockTargetState->setVal(UNSECURED, true);
+          set_lock_state();
+      }
+  }
+
+  void lock() const {
+      if ( lockCurrentState->getVal() != SECURED ) {
+          lockTargetState->setVal(SECURED, true);
+          set_lock_state();
+      }
+  }
+
+  void toggle_lock() const {
+    if ( lockCurrentState->getVal() == UNSECURED ) {
+        lockTargetState->setVal(SECURED, true);
+    } else {
+        lockTargetState->setVal(UNSECURED, true);
+    }
+    set_lock_state();
+  }
+
+  static void callback_toggle(void *self) {
+      while ( true ) {
+          TickType_t now = xTaskGetTickCount();
+          if ( now > relay_toggle_time ) {
+              open_relay();
+              ((LockMechanism*)self)->lockTargetState->setVal(SECURED);
+              break;
+          } else {
+              vTaskDelay(relay_toggle_time - now);
+          }
+      }
+      vTaskDelete(nullptr);
+  }
+
+  /** called to check the target vs current lock state and to sync it up as it may have been changed
+   * OOB by a task
+   */
+  void check_lock_state() const {
+      if ( lockCurrentState->getVal() != lockTargetState->getVal() ) {
+          int targetState = lockTargetState->getVal();
+          ESP_LOGI(TAG, "Check: New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
+          lockCurrentState->setVal(targetState);
+          // TODO: should we consider the delay??
+          lockTargetState->setVal(targetState);
+          publish_lock_state();
+      }
+  }
+
+  void set_lock_state() const {
+      int targetState = lockTargetState->getNewVal();
+      ESP_LOGI(TAG, "New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
+
+      lockCurrentState->setVal(targetState);
+      // TODO: should we consider the delay??
+      lockTargetState->setVal(targetState);
+
+      publish_lock_state();
+
+#ifdef RELAY_PIN
+      if ( targetState == SECURED ) {
+          // lock
+          open_relay();
+      } else {
+          // unlock
+          close_relay();
+#ifdef MOMENTARY_LOCK
+          xTaskCreate(LockMechanism::callback_toggle, "openrly",
+                      configMINIMAL_STACK_SIZE, lockMechanism, 5, nullptr);
+#endif
+      }
+#endif
+  }
+
   void publish_lock_state() const {
-      int newTargetState = lockTargetState->getNewVal();
-      int targetState = lockTargetState->getVal();
-      // lockTargetState->setVal(!lockCurrentState->getVal());
-      // lockCurrentState->setVal(lockTargetState->getVal());
+      int currentState = lockCurrentState->getVal();
 
       if ( mqtt_enabled && mqtt_topics.state_topic != nullptr ) {
-          mqtt.publish(mqtt_topics.state_topic, std::to_string(newTargetState == targetState ? !lockCurrentState->getVal() : newTargetState).c_str());
+          mqtt.publish(mqtt_topics.state_topic, std::to_string(currentState).c_str());
       }
-#ifdef RELAY_PIN
-      // TODO: needs review
-      close_relay(nullptr);
-#endif
   }
 
   static void publish_passive(uint16_t *atqa, uint8_t *sak, uint8_t *uid, uint8_t uidLen) {
@@ -677,6 +756,9 @@ void wifiCallback()
         mqtt.begin();
         mqtt_enabled = true;
 
+        // Note: we have to do it this way as MQTT is not enabled/set up when LockMechanism is created
+        ((LockMechanism*)lockMechanism)->enable_mqtt();
+
 #ifdef HA_DISCOVERY_PREFIX
         ESP_LOGI(TAG, "Enabling HomeAssistant discovery");
 
@@ -733,8 +815,6 @@ void setup()
   relay_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
   relay_conf.pull_up_en = GPIO_PULLUP_DISABLE;
   gpio_config(&relay_conf);
-
-  xTaskCreate(open_relay, "openrly", configMINIMAL_STACK_SIZE, nullptr, 5, nullptr);
 #endif
 
   nvs_open("SAVED_DATA", NVS_READWRITE, &savedData);

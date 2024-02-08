@@ -14,6 +14,9 @@ using namespace nlohmann;
 #define HARDWARE_FINISH_GOLD "AQSq1uwA"
 #define HARDWARE_FINISH_SILVER "AQTj4+MA"
 
+#define UNSECURED 0
+#define SECURED 1
+
 typedef enum
 {
     Current_Unsecured = 0,
