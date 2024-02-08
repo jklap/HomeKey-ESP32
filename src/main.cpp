@@ -89,8 +89,7 @@ struct LockManagement : Service::LockManagement
 
   LockManagement() : Service::LockManagement()
   {
-    ESP_LOGI(TAG, "Configuring LockManagement"); // initialization message
-
+    ESP_LOGI(TAG, "Configuring LockManagement");
     lockControlPoint = new Characteristic::LockControlPoint();
     version = new Characteristic::Version();
   } // end constructor
@@ -105,7 +104,7 @@ struct LockMechanism : Service::LockMechanism
 
   LockMechanism() : Service::LockMechanism()
   {
-    ESP_LOGI(TAG, "Configuring LockMechanism"); // initialization message
+    ESP_LOGI(TAG, "Configuring LockMechanism");
     lockCurrentState = new Characteristic::LockCurrentState(SECURED, false);
     lockTargetState = new Characteristic::LockTargetState(SECURED, false);
     lockMechanism = this;
@@ -117,7 +116,7 @@ struct LockMechanism : Service::LockMechanism
               mqtt.subscribe(
                       mqtt_topics.set_state_topic,
                       [this](const char *payload) {
-                          ESP_LOGI(TAG, "Received message in topic set_state: %s", payload);
+                          ESP_LOGI(TAG, "Received message in topic set_state: '%s'", payload);
                           int state = atoi(payload);
                           switch (state) {
                               case SECURED:
@@ -132,6 +131,7 @@ struct LockMechanism : Service::LockMechanism
               });
           }
 #ifndef MOMENTARY_LOCK
+        // TODO: review & update
         if ( mqtt_topics.set_target_topic != nullptr ) {
             mqtt.subscribe(
                     mqtt_topics.set_target_topic, [this](const char *payload) {
@@ -153,13 +153,13 @@ struct LockMechanism : Service::LockMechanism
 #endif
 #ifdef HA_DISCOVERY_PREFIX
           mqtt.subscribe(HA_DISCOVERY_PREFIX "/status", [this](const char *payload) {
-              ESP_LOGI(TAG, "Received '%s' from HA", payload);
+              ESP_LOGD(TAG, "Received '%s' from HA", payload);
               if ( strcmp(payload, "online") == 0 ) {
                   mqtt.publish(mqtt_topics.prefix, "online");
                   publish_lock_state();
               }
           });
-#endif
+#endif // HA_DISCOVERY_PREFIX
       }
   }
 
@@ -203,7 +203,7 @@ struct LockMechanism : Service::LockMechanism
         {
           if (selectCmdRes[selectCmdResLength - 2] == 0x90 && selectCmdRes[selectCmdResLength - 1] == 0x00)
           {
-            ESP_LOGI(TAG, "*** SELECT HOMEKEY APPLET SUCCESSFUL ***");
+            ESP_LOGD(TAG, "*** SELECT HOMEKEY APPLET SUCCESSFUL ***");
             ESP_LOGD(TAG, "Reader Private Key: %s",
                      utils::bufToHexString((const uint8_t *)readerData.reader_private_key, sizeof(readerData.reader_private_key)).c_str());
 
@@ -212,17 +212,18 @@ struct LockMechanism : Service::LockMechanism
             if (std::get<2>(authResult) != homeKeyReader::kFlowFailed)
             {
                 toggle_lock();
-                publish_auth(std::get<0>(authResult), std::get<1>(authResult));
-                ESP_LOGI(TAG, "Total time: %lu ms", millis() - startTime);
+                publish_auth(uid, uidLen, std::get<0>(authResult), std::get<1>(authResult));
+                ESP_LOGD(TAG, "Total time: %lu ms", millis() - startTime);
             }
             else // failed flow
             {
-                ESP_LOGI(TAG, "failed flow");
+                ESP_LOGI(TAG, "Homekey failed auth flow");
             }
           }
           else // applet select failed
           {
               // possible not a HomeKey device
+              ESP_LOGI(TAG, "Select HomeKey applet failed");
               publish_passive(atqa, sak, uid, uidLen);
           }
         }
@@ -239,8 +240,8 @@ struct LockMechanism : Service::LockMechanism
       else // not a homekey?
       {
           ESP_LOGI(TAG, "Not a HomeKey?");
-#ifdef SEND_PASSIVE
-#endif
+          publish_passive(atqa, sak, uid, uidLen);
+          // TODO: trap this device until it's out of field?
       }
     }
     else // no passiveTarget
@@ -309,7 +310,7 @@ struct LockMechanism : Service::LockMechanism
 
   void set_lock_state() const {
       int targetState = lockTargetState->getNewVal();
-      ESP_LOGI(TAG, "New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
+      ESP_LOGI(TAG, "Set: New LockState=%d, Current LockState=%d", targetState, lockCurrentState->getVal());
 
       lockCurrentState->setVal(targetState);
       // TODO: should we consider the delay??
@@ -327,9 +328,9 @@ struct LockMechanism : Service::LockMechanism
 #ifdef MOMENTARY_LOCK
           xTaskCreate(LockMechanism::callback_toggle, "openrly",
                       configMINIMAL_STACK_SIZE, lockMechanism, 5, nullptr);
-#endif
+#endif // MOMENTARY_LOCK
       }
-#endif
+#endif // RELAY_PIN
   }
 
   void publish_lock_state() const {
@@ -346,18 +347,26 @@ struct LockMechanism : Service::LockMechanism
       payload["sak"] = utils::bufToHexString(sak, 1);
       payload["uid"] = utils::bufToHexString(uid, uidLen);
       payload["homekey"] = false;
+#ifdef SEND_PASSIVE_TAG_SCANNED
       if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
           mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
       }
+      if ( mqtt_enabled && mqtt_topics.tag_scanned_topic != nullptr ) {
+          mqtt.publish(mqtt_topics.tag_scanned_topic, utils::bufToHexString(uid, uidLen).c_str());
+      }
+#endif
   }
 
-  static void publish_auth(uint8_t *issuerId, uint8_t *endpointId) {
+  static void publish_auth(uint8_t *uid, uint8_t uidLen, uint8_t *issuerId, uint8_t *endpointId) {
       json payload;
       payload["issuerId"] = utils::bufToHexString(issuerId, 8);
       payload["endpointId"] = utils::bufToHexString(endpointId, 6);
       payload["homekey"] = true;
       if ( mqtt_enabled && mqtt_topics.auth_topic != nullptr ) {
           mqtt.publish(mqtt_topics.auth_topic, payload.dump().c_str());
+      }
+      if ( mqtt_enabled && mqtt_topics.tag_scanned_topic != nullptr ) {
+          mqtt.publish(mqtt_topics.tag_scanned_topic, utils::bufToHexString(uid, uidLen).c_str());
       }
   }
 }; // end LockMechanism
@@ -371,7 +380,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
 
   NFCAccess() : Service::NFCAccess()
   {
-    ESP_LOGI(TAG, "Configuring NFCAccess"); // initialization message
+    ESP_LOGI(TAG, "Configuring NFCAccess");
     configurationState = new Characteristic::ConfigurationState();
     nfcControlPoint = new Characteristic::NFCAccessControlPoint();
     nfcSupportedConfiguration = new Characteristic::NFCAccessSupportedConfiguration();
@@ -440,7 +449,9 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
       }
       if (foundEndpoint == nullptr)
       {
-        ESP_LOGD(TAG, "Adding new endpoint - ID: %s , PublicKey: %s", utils::bufToHexString(endpointId.data(), 6).c_str(), utils::bufToHexString(endEphPubKey, sizeof(endEphPubKey)).c_str());
+        ESP_LOGD(TAG, "Adding new endpoint - ID: %s , PublicKey: %s",
+                 utils::bufToHexString(endpointId.data(), 6).c_str(),
+                 utils::bufToHexString(endEphPubKey, sizeof(endEphPubKey)).c_str());
         homeKeyEndpoint::endpoint_t endpoint;
         endpointEnrollment::enrollment_t enrollment;
         enrollment.unixTime = std::time(nullptr);
@@ -579,7 +590,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
         int ret = set_reader_key(RKR.value.data(), RKR.value.size());
         if (ret == 0)
         {
-          ESP_LOGI(TAG, "KEY SAVED TO NVS, COMPOSING RESPONSE");
+          ESP_LOGD(TAG, "KEY SAVED TO NVS, COMPOSING RESPONSE");
           size_t out_len = 0;
           TLV<Reader_Key_Response, 2> readerKeyResTlv;
           readerKeyResTlv.create(kReader_Res_Status, 1, "STATUS");
@@ -603,7 +614,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
           }
           resB64[out_len] = '\0';
           ESP_LOGD(TAG, "B64 ENC STATUS: %d", ret);
-          ESP_LOGI(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
+          ESP_LOGD(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
           callback->insert(callback->end(), resB64, resB64 + sizeof(resB64));
         }
       }
@@ -640,7 +651,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
           }
           resB64[out_len] = '\0';
           ESP_LOGD(TAG, "B64 ENC STATUS: %d", ret);
-          ESP_LOGI(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
+          ESP_LOGD(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
           callback->insert(callback->end(), resB64, resB64 + sizeof(resB64));
         }
       }
@@ -658,7 +669,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
       ESP_LOGD(TAG, "NVS COMMIT: %s", esp_err_to_name(commit_nvs));
       const char *res = "BwMCAQA=";
       size_t resLen = 9;
-      ESP_LOGI(TAG, "RESPONSE LENGTH: %d, DATA: %s", resLen, res);
+      ESP_LOGD(TAG, "RESPONSE LENGTH: %d, DATA: %s", resLen, res);
       callback->insert(callback->end(), res, res + resLen);
     }
     return true;
@@ -708,7 +719,7 @@ void wifiCallback()
             ESP_LOGW(TAG, "Failed call to nvs_commit (%s)", esp_err_to_name(ret));
         }
     }
-#endif
+#endif // MQTT_HOST
     if (nvs_get_blob(savedData, "MQTTDATA", nullptr, &len) == ESP_OK )
     {
         if ( len != sizeof(mqttData_t)) {
@@ -751,12 +762,13 @@ void wifiCallback()
         mqtt.connected_callback = [] {
             mqtt.publish(mqtt_topics.prefix, "online");
         };
-#endif
+#endif // HA_DISCOVERY_PREFIX
 
         mqtt.begin();
         mqtt_enabled = true;
 
         // Note: we have to do it this way as MQTT is not enabled/set up when LockMechanism is created
+        // and it needs to be done before mqtt.loop()
         ((LockMechanism*)lockMechanism)->enable_mqtt();
 
 #ifdef HA_DISCOVERY_PREFIX
@@ -785,18 +797,40 @@ void wifiCallback()
 })END";
 
         char *message;
+        char *topic;
+
+        asprintf(&topic, "%s/binary_sensor/%s/config", HA_DISCOVERY_PREFIX, unique_id);
+        ESP_LOGD(TAG, "topic: %s", topic);
         asprintf(&message, config_json,
                  mqtt_topics.state_topic, mqtt_topics.prefix,
                  unique_id, unique_id,
                  DISPLAY_NAME, __DATE__ " " __TIME__);
-        char *topic;
-        asprintf(&topic, "%s/binary_sensor/%s/config", HA_DISCOVERY_PREFIX, unique_id);
-        ESP_LOGD(TAG, "topic: %s", topic);
-        ESP_LOGD(TAG, "message: %s", message);
+        ESP_LOGD(TAG, "binary_sensor config: %s", message);
+
         mqtt.publish(topic, message, 0, true);
         free(message);
         free(topic);
-#endif
+
+#ifdef HA_SEND_TAG_TOPIC
+        const char *tag_json = R"END({
+"topic":"%s",
+"dev":{
+ "ids":["%s"]
+}
+})END";
+        asprintf(&mqtt_topics.tag_scanned_topic, HA_SEND_TAG_TOPIC, unique_id);
+
+        asprintf(&topic, "%s/tag/%s/config", HA_DISCOVERY_PREFIX, unique_id);
+        ESP_LOGD(TAG, "topic: %s", topic);
+        asprintf(&message, tag_json,
+                 mqtt_topics.tag_scanned_topic, unique_id);
+        ESP_LOGD(TAG, "tag_scanned config: %s", message);
+
+        mqtt.publish(topic, message, 0, true);
+        free(message);
+        free(topic);
+#endif // HA_SEND_TAG_TOPIC
+#endif // HA_DISCOVERY_PREFIX
         free(unique_id);
     }
 }
@@ -808,6 +842,7 @@ void setup()
   const char *TAG = "SETUP";
 
 #ifdef RELAY_PIN
+  ESP_LOGI(TAG, "Setting up relay on pin %i", RELAY_PIN);
   gpio_config_t relay_conf;
   relay_conf.mode = GPIO_MODE_OUTPUT;
   relay_conf.pin_bit_mask = RELAY_PIN_SEL;
@@ -815,7 +850,7 @@ void setup()
   relay_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
   relay_conf.pull_up_en = GPIO_PULLUP_DISABLE;
   gpio_config(&relay_conf);
-#endif
+#endif // RELAY_PIN
 
   nvs_open("SAVED_DATA", NVS_READWRITE, &savedData);
   if (nvs_get_blob(savedData, "READERDATA", nullptr, &len) == ESP_OK )
@@ -857,7 +892,7 @@ void setup()
         homeSpan.enableOTA();
     }
     nvs_close(otaNVS);
-#endif
+#endif // OTA_AUTH
   homeSpan.begin(Category::Locks, DISPLAY_NAME);
 #ifdef WIFI_SSID
   homeSpan.setWifiCredentials(WIFI_SSID, WIFI_CREDENTIALS);

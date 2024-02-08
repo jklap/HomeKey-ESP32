@@ -58,6 +58,13 @@
 
 // define if you want to send discovery and availability messages to HomeAssistant
 #define HA_DISCOVERY_PREFIX "homeassistant"
+#ifdef HA_DISCOVERY_PREFIX
+    // send a tag scanned event to HA
+    // this sends the UID (not the endpoint ID)
+    #define HA_SEND_TAG_TOPIC MQTT_PREFIX "/tag_scanned"
+    // do we want to send passive device UIDs to HA?
+    //#define SEND_PASSIVE_TAG_SCANNED
+#endif
 
 // Note: if WIFI_SSID is not set then the device will start a Wifi AP on first boot
 //#define WIFI_SSID "<your_network_ssid>"

@@ -255,4 +255,5 @@ struct mqttTopics_t
     char *state_topic = nullptr;
     char *set_target_topic = nullptr;
     char *set_current_topic = nullptr;
+    char *tag_scanned_topic = nullptr;
 };
