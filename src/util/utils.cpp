@@ -43,7 +43,7 @@ std::string utils::bufToHexString(const uint16_t *buf, size_t len, bool ignoreLe
 std::vector<uint8_t> utils::encodeB64(const uint8_t *src, size_t len){
   const char *TAG = "Utils::encodeB64";
   size_t out_len1 = 0;
-  mbedtls_base64_encode(NULL, 0, &out_len1, src, len);
+  mbedtls_base64_encode(nullptr, 0, &out_len1, src, len);
   ESP_LOGV(TAG, "B64 ENCODED LENGTH: %d", out_len1);
   uint8_t dst[out_len1];
   int ret = mbedtls_base64_encode(dst, sizeof(dst), &out_len1, src, len);
@@ -59,20 +59,21 @@ std::vector<uint8_t> utils::decodeB64(const char *src)
   std::string msgCy = src;
   msgCy.erase(std::remove(msgCy.begin(), msgCy.end(), '\\'), msgCy.end());
   size_t out_len1 = 0;
-  mbedtls_base64_decode(NULL, 0, &out_len1, (const unsigned char *)msgCy.c_str(), msgCy.size());
+  mbedtls_base64_decode(nullptr, 0, &out_len1, (const unsigned char *)msgCy.c_str(), msgCy.size());
   ESP_LOGV(TAG, "B64 DECODED LENGTH: %d", out_len1);
   uint8_t dst[out_len1];
   int ret = mbedtls_base64_decode(dst, sizeof(dst), &out_len1, (const unsigned char *)msgCy.c_str(), msgCy.size());
   std::vector<uint8_t> dec_vec{dst, dst + out_len1};
   ESP_LOGV(TAG, "B64 RESULT: %d", ret);
 
-  ESP_LOGV(TAG, "B64 DECODED DATA: %s", bufToHexString(dst, out_len1).c_str());;
-  if (ret == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL)
+  ESP_LOGV(TAG, "B64 DECODED DATA: %s", bufToHexString(dst, out_len1).c_str());
+  if (ret == MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
     ESP_LOGW(TAG, "*** WARNING:  Destination buffer is too small (%d out of %d bytes needed)", sizeof(dst), out_len1);
-  else if (ret == MBEDTLS_ERR_BASE64_INVALID_CHARACTER)
+  } else if (ret == MBEDTLS_ERR_BASE64_INVALID_CHARACTER) {
     ESP_LOGW(TAG, "*** WARNING:  Data is not in base-64 format");
+  }
   if(ret != 0){
-    return std::vector<uint8_t>();
+    return {};
   }
   return dec_vec;
 }
@@ -141,7 +142,6 @@ std::vector<unsigned char> utils::simple_tlv(unsigned char tag, const unsigned c
     ESP_LOGD(TAG, "TLV %x[%d]: %s", tag, valLength, bufToHexString(buf.data() + (lenExt ? 3 : 2), len - (lenExt ? 3 : 2)).c_str());
     return buf;
   }
-  return std::vector<uint8_t>{};
 }
 
 // Function to calculate CRC16

@@ -215,7 +215,7 @@ std::tuple<homeKeyIssuer::issuer_t *, homeKeyEndpoint::endpoint_t *> HKAuthentic
       std::vector<uint8_t> hkdf(58, 0);
       Auth0_keying_material("VolatileFast", endpoint.endpoint_key_x, endpoint.persistent_key, hkdf.data(), hkdf.size());
       LOG(V, "HKDF Derived Key: %s", utils::bufToHexString(hkdf.data(), hkdf.size()).c_str());
-      if (!memcmp(hkdf.data(), cryptogram.data(), 16))
+      if (memcmp(hkdf.data(), cryptogram.data(), 16) == 0)
       {
         ESP_LOGD(TAG, "Endpoint %s matches cryptogram", utils::bufToHexString(endpoint.endpointId, sizeof(endpoint.endpointId)).c_str());
         foundEndpoint = &endpoint;
@@ -376,7 +376,7 @@ std::tuple<homeKeyIssuer::issuer_t *, homeKeyEndpoint::endpoint_t *, DigitalKeyS
       {
         for (auto &endpoint : issuer.endpoints)
         {
-          if(!memcmp(endpoint.endpointId, device_identifier->value.data(), 6)){
+          if(memcmp(endpoint.endpointId, device_identifier->value.data(), 6) == 0){
             ESP_LOGD(TAG,"STD_AUTH: Found Matching Endpoint, ID: %s", utils::bufToHexString(endpoint.endpointId, sizeof(endpoint.endpointId)).c_str());
             foundEndpoint = &endpoint;
             foundIssuer = &issuer;
@@ -420,7 +420,6 @@ std::tuple<homeKeyIssuer::issuer_t *, homeKeyEndpoint::endpoint_t *, DigitalKeyS
         mbedtls_ecp_keypair_free(&keypair);
 
         ESP_LOGV(TAG,"signature verification result: %d", result);
-
         if (result == 0)
         {
           std::vector<uint8_t> cmdFlowRes = commandFlow(homeKeyReader::kCmdFlowSuccess);
@@ -444,7 +443,7 @@ std::tuple<homeKeyIssuer::issuer_t *, homeKeyEndpoint::endpoint_t *, DigitalKeyS
       return std::make_tuple(foundIssuer, foundEndpoint, context, std::vector<uint8_t>{}, homeKeyReader::kFlowFailed);
     }
   }
-  ESP_LOGE(TAG, "Response Status not 0x90, something went wrong!");
+  ESP_LOGE(TAG, "Response Status not 0x90, something went wrong (%i)", response[responseLength - 2]);
   commandFlow(homeKeyReader::kCmdFlowFailed);
   return std::make_tuple(foundIssuer, foundEndpoint, DigitalKeySecureContext(), std::vector<uint8_t>{}, homeKeyReader::kFlowFailed);
 }

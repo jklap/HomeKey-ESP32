@@ -151,7 +151,6 @@ void insertDummyIssuers(const char *buf)
     mbedtls_ctr_drbg_context drbg;
     mbedtls_ctr_drbg_init(&drbg);
     mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
-    std::stringstream strVal;
     unsigned int iterations = atoi(&buf[1]);
     if (iterations > 64)
     {

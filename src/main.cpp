@@ -36,7 +36,7 @@ PN532_I2C pn532i2c(Wire);
 PN532 nfc(pn532i2c);
 #endif
 
-nvs_handle savedData;
+nvs_handle_t savedData;
 homeKeyReader::readerData_t readerData;
 bool defaultToStd = false;
 void *lockMechanism;
@@ -85,7 +85,7 @@ struct LockManagement : Service::LockManagement
 {
   const char *TAG = "LockManagement";
 
-  LockManagement() : Service::LockManagement()
+  LockManagement()
   {
     ESP_LOGI(TAG, "Configuring LockManagement");
     new Characteristic::LockControlPoint();
@@ -100,7 +100,7 @@ struct LockMechanism : Service::LockMechanism
   SpanCharacteristic *lockTargetState;
   const char *TAG = "LockMechanism";
 
-  LockMechanism() : Service::LockMechanism()
+  LockMechanism()
   {
     ESP_LOGI(TAG, "Configuring LockMechanism");
     lockCurrentState = new Characteristic::LockCurrentState(SECURED, false);
@@ -285,9 +285,9 @@ struct LockMechanism : Service::LockMechanism
               open_relay();
               ((LockMechanism*)self)->lockTargetState->setVal(SECURED);
               break;
-          } else {
-              vTaskDelay(relay_toggle_time - now);
           }
+
+          vTaskDelay(relay_toggle_time - now);
       }
       vTaskDelete(nullptr);
   }
@@ -374,7 +374,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
   SpanCharacteristic *nfcControlPoint;
   const char *TAG = "NFCAccess";
 
-  NFCAccess() : Service::NFCAccess()
+  NFCAccess()
   {
     ESP_LOGI(TAG, "Configuring NFCAccess");
     new Characteristic::ConfigurationState();
@@ -393,7 +393,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
         homeKeyIssuer::issuer_t *foundIssuer = nullptr;
         for (auto &issuer : readerData.issuers)
         {
-          if (!memcmp(issuer.issuerId, id.data(), 8))
+          if (memcmp(issuer.issuerId, id.data(), 8) == 0)
           {
             ESP_LOGD(TAG, "Issuer %s already added, skipping", utils::bufToHexString(issuer.issuerId, 8).c_str());
             foundIssuer = &issuer;
@@ -423,7 +423,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
     homeKeyIssuer::issuer_t *foundIssuer = nullptr;
     for (auto &issuer : readerData.issuers)
     {
-      if (!memcmp(issuer.issuerId, tlv8.buf(kDevice_Req_Issuer_Key_Identifier), 8))
+      if (memcmp(issuer.issuerId, tlv8.buf(kDevice_Req_Issuer_Key_Identifier), 8) == 0)
       {
         ESP_LOGD(TAG, "Found issuer - ID: %s", utils::bufToHexString(issuer.issuerId, 8).c_str());
         foundIssuer = &issuer;
@@ -437,7 +437,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
       std::vector<uint8_t> endpointId = utils::getHashIdentifier(endEphPubKey, sizeof(endEphPubKey), false);
       for (auto &endpoint : foundIssuer->endpoints)
       {
-        if (!memcmp(endpoint.endpointId, endpointId.data(), 6))
+        if (memcmp(endpoint.endpointId, endpointId.data(), 6) == 0)
         {
           ESP_LOGD(TAG, "Found endpoint - ID: %s", utils::bufToHexString(endpoint.endpointId, 6).c_str());
           foundEndpoint = &endpoint;
@@ -516,12 +516,8 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
     memcpy(readerData.reader_identifier, readeridentifier.data(), 8);
     bool nvs = save_to_nvs();
     tlv8.clear();
-    if (nvs)
-    {
-      return 0;
-    }
-    else
-      return 1;
+
+    return nvs ? 0 : 1;
   }
 
   boolean update(std::vector<char> *callback, int *callbackLen) override
@@ -533,8 +529,9 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
     char *dataNfcControlPoint = nfcControlPoint->getNewString();
     ESP_LOGD(TAG, "NfcControlPoint Length: %d", strlen(dataNfcControlPoint));
     std::vector<uint8_t> decB64 = utils::decodeB64(dataNfcControlPoint);
-    if (decB64.empty())
+    if (decB64.empty()) {
       return false;
+    }
     ESP_LOGD(TAG, "Decoded data: %s", utils::bufToHexString(decB64.data(), decB64.size()).c_str());
     ESP_LOGD(TAG, "Decoded data length: %d", decB64.size());
     std::vector<BERTLV> tlvData = BERTLV::unpack_array(decB64);
@@ -900,6 +897,9 @@ void setup()
   homeSpan.setSerialInputDisable(DISABLE_SERIAL_PORT);
   homeSpan.setSketchVersion(__DATE__ " " __TIME__);
 
+  homeSpan.setPairCallback(pairCallback);
+  homeSpan.setWifiCallback(wifiCallback);
+
   new SpanUserCommand('D', "Delete Home Key Data", deleteReaderData);
   new SpanUserCommand('L', "Set Log Level", setLogLevel);
   new SpanUserCommand('F', "Set HomeKey Flow", setFlow);
@@ -913,7 +913,7 @@ void setup()
   nfc.begin();
 
   uint32_t versiondata = nfc.getFirmwareVersion();
-  if (!versiondata)
+  if (versiondata == 0)
   {
     ESP_LOGE("NFC_SETUP", "Didn't find PN53x board");
   }
@@ -941,8 +941,6 @@ void setup()
   new NFCAccess();
   new Service::HAPProtocolInformation();
   new Characteristic::Version();
-  homeSpan.setPairCallback(pairCallback);
-  homeSpan.setWifiCallback(wifiCallback);
 }
 
 //////////////////////////////////////

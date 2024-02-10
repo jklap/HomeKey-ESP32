@@ -44,7 +44,7 @@ std::tuple<std::vector<uint8_t>, size_t> DigitalKeySecureContext::pad_mode_3(uns
  * 
  * @return the index of the padding flag byte in the message array.
  */
-int DigitalKeySecureContext::unpad_mode_3(unsigned char* message, size_t message_size, unsigned char pad_flag_byte = 0x80, size_t block_size = 16) {
+int DigitalKeySecureContext::unpad_mode_3(const unsigned char* message, size_t message_size, unsigned char pad_flag_byte = 0x80, size_t block_size = 16) {
     for (int i = message_size - 1; i >= 0; --i)
     {
         if (message[i] == pad_flag_byte)
@@ -52,7 +52,7 @@ int DigitalKeySecureContext::unpad_mode_3(unsigned char* message, size_t message
             LOG(V, "Padding found at index: %d", i);
             return i;
         }
-        else if (message[i] == 0x00)
+        if (message[i] == 0x00)
         {
             continue;
         }
@@ -179,12 +179,14 @@ DigitalKeySecureContext::DigitalKeySecureContext(const unsigned char* volatileKe
  * containing the calculated rmac.
  */
 std::tuple<std::vector<uint8_t>, std::vector<uint8_t>> DigitalKeySecureContext::encrypt_command(unsigned char* data, size_t dataSize) {
-    std::vector<uint8_t> ciphertext = encrypt(data, dataSize, command_pcb, kenc, counter);;
+    std::vector<uint8_t> ciphertext = encrypt(data, dataSize, command_pcb, kenc, counter);
     std::vector<uint8_t> calculated_rmac(16);
     size_t input_dataSize = 16 + ciphertext.size();
     std::vector<uint8_t> input_data = concatenate_arrays(mac_chaining_value, ciphertext.data(), 16, ciphertext.size());
     int cmac_status = aes_cmac(kmac, input_data.data(), input_dataSize, calculated_rmac.data());
-    if(cmac_status) return std::make_tuple(std::vector<uint8_t>(), std::vector<uint8_t>());
+    if(cmac_status != 0) {
+      return std::make_tuple(std::vector<uint8_t>(), std::vector<uint8_t>());
+    }
 
     std::vector<uint8_t> result = concatenate_arrays(ciphertext.data(), calculated_rmac.data(), ciphertext.size(), calculated_rmac.size());
 
@@ -210,11 +212,13 @@ std::vector<uint8_t> DigitalKeySecureContext::decrypt_response(const unsigned ch
     int cmac_status = aes_cmac(krmac, input_data.data(), input_dataSize, calculated_rmac.data());
     LOG(V, "recv_rmac: %s", utils::bufToHexString(data + (dataSize - 8), 8).c_str());
     LOG(V, "calculated_rmac: %s", utils::bufToHexString(calculated_rmac.data(), 8).c_str());
-    if(cmac_status) return std::vector<uint8_t>();
+    if(cmac_status != 0) {
+        return {};
+    }
 
-    if(memcmp(data + (dataSize - 8), calculated_rmac.data(), 8)){
+    if(memcmp(data + (dataSize - 8), calculated_rmac.data(), 8) != 0){
         LOG(E, "calculated_rmac != recv_rmac");
-        return std::vector<uint8_t>();
+        return {};
     }
 
     std::vector<uint8_t> plaintext = decrypt(data, dataSize - 8, response_pcb, kenc, counter);
@@ -242,7 +246,7 @@ std::vector<uint8_t> DigitalKeySecureContext::decrypt_response(const unsigned ch
  */
 std::vector<uint8_t> DigitalKeySecureContext::encrypt(unsigned char* plaintext, size_t data_size, const unsigned char* pcb, const unsigned char* key, int counter) {
     if (data_size == 0) {
-        return std::vector<uint8_t>();
+        return {};
     }
 
     // Pad plaintext
@@ -255,7 +259,9 @@ std::vector<uint8_t> DigitalKeySecureContext::encrypt(unsigned char* plaintext, 
     size_t input_data_size = 15 + 1;
     std::vector<uint8_t> input_data = concatenate_arrays(pcb, counter_byte, 15, 1);
     int encrypt_status1 = encrypt_aes_cbc(key, iv.data(), input_data.data(), input_data_size, icv.data());
-    if(encrypt_status1) return std::vector<uint8_t>();
+    if(encrypt_status1 != 0) {
+        return {};
+    }
 
     LOG(V, "ICV: %s", utils::bufToHexString(icv.data(), icv.size()).c_str());
     
@@ -264,7 +270,9 @@ std::vector<uint8_t> DigitalKeySecureContext::encrypt(unsigned char* plaintext, 
     // Encrypt using AES-CBC
     int encrypt_status = encrypt_aes_cbc(key, icv.data(), std::get<0>(padded).data(), std::get<1>(padded), enc.data());
 
-    if(encrypt_status) return std::vector<uint8_t>();
+    if(encrypt_status != 0) {
+        return {};
+    }
 
     LOG(V, "ENCRYPTED: %s", utils::bufToHexString(enc.data(), enc.size()).c_str());
 
@@ -291,7 +299,7 @@ std::vector<uint8_t> DigitalKeySecureContext::encrypt(unsigned char* plaintext, 
  */
 std::vector<uint8_t> DigitalKeySecureContext::decrypt(const unsigned char* ciphertext, size_t cipherTextLen, const unsigned char* pcb, const unsigned char* key, int counter) {
     if (cipherTextLen == 0) {
-        return std::vector<uint8_t>();
+        return {};
     }
 
     std::vector<uint8_t> icv(16, 0);
@@ -300,7 +308,9 @@ std::vector<uint8_t> DigitalKeySecureContext::decrypt(const unsigned char* ciphe
     size_t input_data_size = 15 + 1;
     std::vector<uint8_t> input_data = concatenate_arrays(pcb, counter_byte, 15, 1);
     int encrypt_status = encrypt_aes_cbc(key, iv.data(), input_data.data(), input_data_size, icv.data());
-    if(encrypt_status) return std::vector<uint8_t>();
+    if(encrypt_status != 0) {
+        return {};
+    }
 
     LOG(V, "ICV: %s", utils::bufToHexString(icv.data(), icv.size()).c_str());
 
@@ -309,7 +319,9 @@ std::vector<uint8_t> DigitalKeySecureContext::decrypt(const unsigned char* ciphe
     // Decrypt using AES-CBC
     int decrypt_status = decrypt_aes_cbc(key, icv.data(), ciphertext, cipherTextLen, dec.data());
 
-    if(decrypt_status) return std::vector<uint8_t>();
+    if(decrypt_status != 0) {
+        return {};
+    }
 
     LOG(V, "decryted: %s", utils::bufToHexString(dec.data(), dec.size()).c_str());
 

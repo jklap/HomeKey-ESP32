@@ -25,6 +25,6 @@ public:
   std::vector<uint8_t> signSharedInfo(const uint8_t *data, const size_t len, const uint8_t *privateKey, const size_t keyLen);
   std::vector<uint8_t> get_x(std::vector<uint8_t> &pubKey);
   std::vector<uint8_t> get_x(uint8_t *pubKey, size_t len);
-  std::vector<uint8_t> getPublicKey(uint8_t *privKey, size_t len);
-  static int esp_rng(void *, uint8_t *buf, size_t len);
+  static std::vector<uint8_t> getPublicKey(uint8_t *privKey, size_t len);
+  static int esp_rng([[maybe_unused]] void *, uint8_t *buf, size_t len);
 };
