@@ -892,6 +892,9 @@ void setup()
   }
   homeSpan.setStatusPin(GPIO_NUM_2);
   // homeSpan.setStatusAutoOff(5);
+#ifdef CONTROL_PIN
+  homeSpan.setControlPin(CONTROL_PIN);
+#endif
   homeSpan.reserveSocketConnections(2);
   homeSpan.setLogLevel(0);
 

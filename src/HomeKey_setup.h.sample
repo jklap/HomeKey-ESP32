@@ -22,6 +22,9 @@
 // if undefined will use the HomeSpan default
 //#define PAIRING_CODE "46637726"
 
+// see HomeSpan setControlPin()
+//#define CONTROL_PIN GPIO_NUM_17
+
 // disable Serial port access?
 #define DISABLE_SERIAL_PORT false
 
@@ -33,7 +36,7 @@
 
 #ifdef PN532_USES_SPI
     // chip select pin
-    #define PN532_SS (5)
+    #define PN532_SS (GPIO_NUM_5)
 #endif
 
 // defining MQTT host, username, password sets the defaults but a user is still allowed to configure via CLI
