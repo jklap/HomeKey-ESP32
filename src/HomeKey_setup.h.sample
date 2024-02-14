@@ -64,6 +64,8 @@
     #define HA_SEND_TAG_TOPIC MQTT_PREFIX "/tag_scanned"
     // do we want to send passive device UIDs to HA?
     //#define SEND_PASSIVE_TAG_SCANNED
+    // do we want to allow HA to control the lock?
+    //#define HA_LOCK_CONTROL
 #endif
 
 // Note: if WIFI_SSID is not set then the device will start a Wifi AP on first boot

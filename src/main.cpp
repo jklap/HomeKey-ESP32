@@ -769,14 +769,51 @@ void wifiCallback()
         // let mqtt get some time to make any needed connections to the broker
         mqtt.loop();
 
-        // TODO: Lock control topic?
-        // TODO: is this lock device valid if we are only sending auth messages?
+        char *message;
+        char *topic;
+
+#ifdef HA_LOCK_CONTROL
+        const char *control_json = R"END({
+"name":null,
+"cmd_t":"%s",
+"pl_lock":"%i",
+"pl_unlk","%i",
+"stat_t":"%s",
+"stat_locked":"%i",
+"stat_unlocked":"%i",
+"avty_t":"%s",
+"pl_avail":"online",
+"pl_not_avail":"offline",
+"uniq_id":"control%s",
+"dev":{
+ "ids":["%s"],
+ "name":"%s",
+ "sw":"%s"
+}
+})END";
+        asprintf(&topic, "%s/lock/%s/config", HA_DISCOVERY_PREFIX, unique_id);
+
+        asprintf(&message, control_json,
+                 mqtt_topics.set_state_topic,
+                 SECURED, UNSECURED,
+                 mqtt_topics.state_topic,
+                 SECURED, UNSECURED,
+                 mqtt_topics.prefix,
+                 unique_id, unique_id,
+                 DISPLAY_NAME, __DATE__ " " __TIME__);
+        ESP_LOGD(TAG, "control config: %s", message);
+
+        mqtt.publish(topic, message, 0, true);
+        free(message);
+        free(topic);
+
+#else // not HA_LOCK_CONTROL
         const char *config_json = R"END({
 "name":null,
 "dev_cla":"lock",
 "stat_t":"%s",
-"pl_on":"0",
-"pl_off":"1",
+"pl_on":"%i",
+"pl_off":"%i",
 "avty_t":"%s",
 "pl_avail":"online",
 "pl_not_avail":"offline",
@@ -788,13 +825,11 @@ void wifiCallback()
 }
 })END";
 
-        char *message;
-        char *topic;
-
         asprintf(&topic, "%s/binary_sensor/%s/config", HA_DISCOVERY_PREFIX, unique_id);
-        ESP_LOGD(TAG, "topic: %s", topic);
         asprintf(&message, config_json,
-                 mqtt_topics.state_topic, mqtt_topics.prefix,
+                 mqtt_topics.state_topic,
+                 UNSECURED, SECURED,
+                 mqtt_topics.prefix,
                  unique_id, unique_id,
                  DISPLAY_NAME, __DATE__ " " __TIME__);
         ESP_LOGD(TAG, "binary_sensor config: %s", message);
@@ -802,6 +837,7 @@ void wifiCallback()
         mqtt.publish(topic, message, 0, true);
         free(message);
         free(topic);
+#endif // not HA_LOCK_CONTROL
 
 #ifdef HA_SEND_TAG_TOPIC
         const char *tag_json = R"END({
@@ -813,7 +849,6 @@ void wifiCallback()
         asprintf(&mqtt_topics.tag_scanned_topic, HA_SEND_TAG_TOPIC, unique_id);
 
         asprintf(&topic, "%s/tag/%s/config", HA_DISCOVERY_PREFIX, unique_id);
-        ESP_LOGD(TAG, "topic: %s", topic);
         asprintf(&message, tag_json,
                  mqtt_topics.tag_scanned_topic, unique_id);
         ESP_LOGD(TAG, "tag_scanned config: %s", message);
