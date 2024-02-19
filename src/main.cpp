@@ -890,7 +890,9 @@ void setup()
     homeKeyReader::readerData_t p = data.template get<homeKeyReader::readerData_t>();
     readerData = p;
   }
-  homeSpan.setStatusPin(GPIO_NUM_2);
+#ifdef STATUS_LED_PIN
+  homeSpan.setStatusPin(STATUS_LED_PIN);
+#endif
   // homeSpan.setStatusAutoOff(5);
 #ifdef CONTROL_PIN
   homeSpan.setControlPin(CONTROL_PIN);

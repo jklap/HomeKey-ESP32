@@ -22,6 +22,9 @@
 // if undefined will use the HomeSpan default
 //#define PAIRING_CODE "46637726"
 
+// pin for the status led (GPIO2 for D1 Mini32)
+#define STATUS_LED_PIN GPIO_NUM_2
+
 // see HomeSpan setControlPin()
 //#define CONTROL_PIN GPIO_NUM_17
 
