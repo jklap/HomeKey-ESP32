@@ -38,6 +38,10 @@
 //#define PN532_USES_I2C
 
 #ifdef PN532_USES_SPI
+    // defaults to the following for an ESP32:
+    // GPIO18: SCK
+    // GPIO19: MISO
+    // GPIO23: MOSI
     // chip select pin
     #define PN532_SS (GPIO_NUM_5)
 #endif

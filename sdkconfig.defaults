@@ -3,6 +3,7 @@
 # https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/kconfig.html#using-sdkconfig-defaults
 # https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/build-system.html#custom-sdkconfig-defaults
 # https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/build-system.html#target-dependent-sdkconfig-defaults
+# https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/kconfig.html
 #
 
 #
@@ -31,6 +32,13 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="with_ota.csv"
 # end of Partition Table
+
+#
+# Arduino Configuration
+#
+CONFIG_AUTOSTART_ARDUINO=y
+# end of Arduino Configuration
+
 
 #
 # Compiler options
@@ -89,13 +97,21 @@ CONFIG_ESP_WIFI_STA_DISCONNECTED_PM_ENABLE=n
 # end of Wi-Fi
 
 #
+# ESP32-specific
+#
+#CONFIG_ESP32_DEFAULT_CPU_FREQ_240=y
+#CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ=240
+# end of ESP32-specific
+
+#
 # FreeRTOS
 #
 
 #
 # Kernel
 #
-CONFIG_FREERTOS_UNICORE=y
+# why?
+#CONFIG_FREERTOS_UNICORE=y
 CONFIG_FREERTOS_HZ=1000
 # end of Kernel
 # end of FreeRTOS
@@ -130,6 +146,8 @@ CONFIG_LWIP_DHCP_GET_NTP_SRV=y
 #
 # mbedTLS
 #
+CONFIG_MBEDTLS_CMAC_C=y
+CONFIG_MBEDTLS_HKDF_C=y
 
 #
 # TLS Key Exchange Methods
@@ -137,6 +155,5 @@ CONFIG_LWIP_DHCP_GET_NTP_SRV=y
 CONFIG_MBEDTLS_PSK_MODES=y
 CONFIG_MBEDTLS_KEY_EXCHANGE_PSK=y
 # end of TLS Key Exchange Methods
-CONFIG_MBEDTLS_HKDF_C=y
 # end of mbedTLS
 # end of Component config

@@ -1,20 +1,21 @@
-#include <auth/authContext.h>
-#include <HomeKey.h>
-#include <util/utils.h>
+#include "auth/authContext.h"
+#include "HomeKey.h"
+#include "util/utils.h"
 #include "HomeSpan.h"
-#include "TLV.h"
-#include <mbedtls/sha256.h>
-#include <mbedtls/ecp.h>
+#include "TLV8.h"
+#include "mbedtls/sha256.h"
+#include "mbedtls/ecp.h"
 #include "PN532.h"
 #include <list>
-#include <util/BERTLV.h>
+#include "util/BERTLV.h"
 #include "HAP.h"
-#include <mbedtls/sha1.h>
-#include <mbedtls/error.h>
-#include <mbedtls/asn1write.h>
+#include "mbedtls/sha1.h"
+#include "mbedtls/error.h"
+#include "mbedtls/asn1write.h"
 #include <sstream>
-#include <PicoMQTT.h>
-#include <ESPmDNS.h>
+#include "PicoMQTT.h"
+#include "ESPmDNS.h"
+#include "esp_ota_ops.h"
 
 #include "HomeKey_setup.h"
 #include "span_commands.h"
@@ -103,8 +104,8 @@ struct LockMechanism : Service::LockMechanism
   LockMechanism()
   {
     ESP_LOGI(TAG, "Configuring LockMechanism");
-    lockCurrentState = new Characteristic::LockCurrentState(SECURED, false);
-    lockTargetState = new Characteristic::LockTargetState(SECURED, false);
+    lockCurrentState = new Characteristic::LockCurrentState(LOCK_SECURED, false);
+    lockTargetState = new Characteristic::LockTargetState(LOCK_SECURED, false);
     lockMechanism = this;
   } // end constructor
 
@@ -117,10 +118,10 @@ struct LockMechanism : Service::LockMechanism
                           ESP_LOGI(TAG, "Received message in topic set_state: '%s'", payload);
                           int state = atoi(payload);
                           switch (state) {
-                              case SECURED:
+                              case LOCK_SECURED:
                                   lock();
                                   break;
-                              case UNSECURED:
+                              case LOCK_UNSECURED:
                                   unlock();
                                   break;
                               default:
@@ -256,24 +257,24 @@ struct LockMechanism : Service::LockMechanism
   } // end loop
 
   void unlock() const {
-      if ( lockCurrentState->getVal() != UNSECURED ) {
-          lockTargetState->setVal(UNSECURED, true);
-          set_lock_state();
-      }
+    if ( lockCurrentState->getVal() != LOCK_UNSECURED ) {
+      lockTargetState->setVal(LOCK_UNSECURED, true);
+      set_lock_state();
+    }
   }
 
   void lock() const {
-      if ( lockCurrentState->getVal() != SECURED ) {
-          lockTargetState->setVal(SECURED, true);
-          set_lock_state();
-      }
+    if ( lockCurrentState->getVal() != LOCK_SECURED ) {
+      lockTargetState->setVal(LOCK_SECURED, true);
+      set_lock_state();
+    }
   }
 
   void toggle_lock() const {
-    if ( lockCurrentState->getVal() == UNSECURED ) {
-        lockTargetState->setVal(SECURED, true);
+    if ( lockCurrentState->getVal() == LOCK_UNSECURED ) {
+      lockTargetState->setVal(LOCK_SECURED, true);
     } else {
-        lockTargetState->setVal(UNSECURED, true);
+      lockTargetState->setVal(LOCK_UNSECURED, true);
     }
     set_lock_state();
   }
@@ -283,7 +284,7 @@ struct LockMechanism : Service::LockMechanism
           TickType_t now = xTaskGetTickCount();
           if ( now > relay_toggle_time ) {
               open_relay();
-              ((LockMechanism*)self)->lockTargetState->setVal(SECURED);
+              ((LockMechanism*)self)->lockTargetState->setVal(LOCK_SECURED);
               break;
           }
 
@@ -317,7 +318,7 @@ struct LockMechanism : Service::LockMechanism
       publish_lock_state();
 
 #ifdef RELAY_PIN
-      if ( targetState == SECURED ) {
+      if ( targetState == LOCK_SECURED ) {
           // lock
           open_relay();
       } else {
@@ -828,7 +829,7 @@ void wifiCallback()
         asprintf(&topic, "%s/binary_sensor/%s/config", HA_DISCOVERY_PREFIX, unique_id);
         asprintf(&message, config_json,
                  mqtt_topics.state_topic,
-                 UNSECURED, SECURED,
+                 LOCK_UNSECURED, LOCK_SECURED,
                  mqtt_topics.prefix,
                  unique_id, unique_id,
                  DISPLAY_NAME, __DATE__ " " __TIME__);

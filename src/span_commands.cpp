@@ -75,7 +75,7 @@ void setMqttConfiguration(const char *buf) {
 
     token = strsep(&strPtr, ":");
     ESP_LOGD(TAG, "Name: '%s'", token);
-    memcpy(&data.mqtt_host, token, sizeof(token));
+    strcpy(data.mqtt_host, token);
 
     token = strsep(&strPtr, " ");
     ESP_LOGD(TAG, "Port: '%s'", token);
@@ -83,17 +83,17 @@ void setMqttConfiguration(const char *buf) {
 
     token = strsep(&strPtr, ":");
     ESP_LOGD(TAG, "Username: '%s'", token);
-    memcpy(&data.mqtt_username, token, sizeof(token));
+    strcpy(data.mqtt_username, token);
 
     token = strsep(&strPtr, " ");
     ESP_LOGD(TAG, "Password: '%s'", token);
-    memcpy(&data.mqtt_password, token, sizeof(token));
+    strcpy(data.mqtt_password, token);
 
     token = strsep(&strPtr, "\n");
     if ( token != nullptr ) {
         // could be empty
         ESP_LOGI(TAG, "Client Id: '%s'", token);
-        memcpy(&data.mqtt_client_id, token, sizeof(token));
+        strcpy(data.mqtt_client_id, token);
     }
 
     // TODO: add confirm set

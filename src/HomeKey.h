@@ -14,10 +14,10 @@ using namespace nlohmann;
 #define HARDWARE_FINISH_GOLD "AQSq1uwA"
 #define HARDWARE_FINISH_SILVER "AQTj4+MA"
 
-#define UNSECURED 0
-#define SECURED 1
-#define JAMMED 2
-#define UNKNOWN 3
+#define LOCK_UNSECURED 0
+#define LOCK_SECURED 1
+#define LOCK_JAMMED 2
+#define LOCK_UNKNOWN 3
 
 typedef enum
 {
