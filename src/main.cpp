@@ -370,6 +370,44 @@ struct LockMechanism : Service::LockMechanism
   }
 }; // end LockMechanism
 
+const TLV8_names NFC_Provision_Names[] = {
+        {kDevice_Req_Key_Type,"KEY.TYPE"},
+        {kDevice_Req_Public_Key,"PUBLIC.KEY"},
+        {kDevice_Req_Issuer_Key_Identifier,"ISSUER.IDENTIFIER"},
+        {kDevice_Req_Key_State,"KEY.STATE"},
+        {kDevice_Req_Key_Identifier,"KEY.IDENTIFIER"},
+};
+
+const TLV8_names NFC_Reader_Key_Names[] = {
+        {kReader_Req_Key_Type,"KEY.TYPE"},
+        {kReader_Req_Reader_Private_Key,"READER.PRIV.KEY"},
+        {kReader_Req_Identifier,"IDENTIFIER"},
+//        {kRequest_Reader_Key_Request,"READER.REQ"},
+//        {kReader_Req_Key_Identifier,"KEY.IDENTIFIER"},
+};
+
+const TLV8_names NFC_Reader_Response_Names[] = {
+        {kReader_Res_Key_Identifier, "KEY.IDENTIFIER"}
+};
+
+const TLV8_names NFC_Reader_Key_Response_Names[] = {
+        { kReader_Res_Reader_Key_Response, "READER.RESPONSE"}
+};
+
+const TLV8_names NFC_Reader_Response_Status_Names[] = {
+        {kReader_Res_Status, "STATUS"}
+};
+
+const TLV8_names NFC_Device_Cred_Request_Names[] = {
+        {kDevice_Res_Key_Identifier, "KEY.IDENTIFIER"},
+        {kDevice_Res_Issuer_Key_Identifier, "ISSUER.IDENTIFIER"},
+        {kDevice_Res_Status, "STATUS"}
+};
+
+const TLV8_names NFC_Device_Cred_Response_Names[] = {
+        {kDevice_Credential_Response, "DEV.RESPONSE"}
+};
+
 struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
 {
   SpanCharacteristic *nfcControlPoint;
@@ -385,11 +423,9 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
 
   std::tuple<uint8_t *, int> provision_device_cred(uint8_t *buf, size_t len)
   {
-    for (size_t i = 0; i < 16; i++)
+    for(auto controller : HAPClient::controllerList)
     {
-      if (HAPClient::controllers[i].allocated)
-      {
-        std::vector<uint8_t> id = utils::getHashIdentifier(HAPClient::controllers[i].LTPK, 32, true);
+        std::vector<uint8_t> id = utils::getHashIdentifier(controller.LTPK, 32, true);
         ESP_LOGD(TAG, "Found allocated controller - ID: %s", utils::bufToHexString(id.data(), 8).c_str());
         homeKeyIssuer::issuer_t *foundIssuer = nullptr;
         for (auto &issuer : readerData.issuers)
@@ -406,35 +442,35 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
           ESP_LOGD(TAG, "Adding new issuer - ID: %s", utils::bufToHexString(id.data(), 8).c_str());
           homeKeyIssuer::issuer_t issuer;
           memcpy(issuer.issuerId, id.data(), 8);
-          memcpy(issuer.publicKey, HAPClient::controllers[i].LTPK, 32);
+          memcpy(issuer.publicKey, controller.LTPK, 32);
           readerData.issuers.emplace_back(issuer);
         }
-      }
     }
-    TLV<Device_Credential_Request, 5> tlv8;
-    ESP_LOGD(TAG, "DCR Buffer length: %d, data: %s", len, utils::bufToHexString(buf, len).c_str());
-    tlv8.create(kDevice_Req_Key_Type, 1, "KEY.TYPE");
-    tlv8.create(kDevice_Req_Public_Key, 65, "PUBLIC.KEY");
-    tlv8.create(kDevice_Req_Issuer_Key_Identifier, 8, "ISSUER.IDENTIFIER");
-    tlv8.create(kDevice_Req_Key_State, 1, "KEY.STATE");
-    tlv8.create(kDevice_Req_Key_Identifier, 8, "KEY.IDENTIFIER");
 
-    ESP_LOGV(TAG, "DCR TLV DECODE STATE: %d", tlv8.unpack(buf, len));
-    tlv8.print(1);
+    ESP_LOGD(TAG, "DCR Buffer length: %d, data: %s", len, utils::bufToHexString(buf, len).c_str());
+    TLV8 tlv8(NFC_Provision_Names, 5);
+    tlv8.unpack(buf, len);
+    tlv8.print();
+
+    uint8_t *issuerId = tlv8.find(kDevice_Req_Issuer_Key_Identifier)->val.get();
+
     homeKeyIssuer::issuer_t *foundIssuer = nullptr;
     for (auto &issuer : readerData.issuers)
     {
-      if (memcmp(issuer.issuerId, tlv8.buf(kDevice_Req_Issuer_Key_Identifier), 8) == 0)
+      if (memcmp(issuer.issuerId, issuerId, 8) == 0)
       {
         ESP_LOGD(TAG, "Found issuer - ID: %s", utils::bufToHexString(issuer.issuerId, 8).c_str());
         foundIssuer = &issuer;
+        break;
       }
     }
     if (foundIssuer != nullptr)
     {
       homeKeyEndpoint::endpoint_t *foundEndpoint = nullptr;
-      uint8_t endEphPubKey[tlv8.len(kDevice_Req_Public_Key) + 1] = {0x04};
-      memcpy(endEphPubKey + 1, tlv8.buf(kDevice_Req_Public_Key), tlv8.len(kDevice_Req_Public_Key));
+      uint8_t *pubKey = tlv8.find(kDevice_Req_Public_Key)->val.get();
+      size_t pubKeyLen = tlv8.find(kDevice_Req_Public_Key)->len;
+      uint8_t endEphPubKey[pubKeyLen + 1] = {0x04};
+      memcpy(endEphPubKey + 1, pubKey, pubKeyLen);
       std::vector<uint8_t> endpointId = utils::getHashIdentifier(endEphPubKey, sizeof(endEphPubKey), false);
       for (auto &endpoint : foundIssuer->endpoints)
       {
@@ -442,11 +478,12 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
         {
           ESP_LOGD(TAG, "Found endpoint - ID: %s", utils::bufToHexString(endpoint.endpointId, 6).c_str());
           foundEndpoint = &endpoint;
+          break;
         }
       }
       if (foundEndpoint == nullptr)
       {
-        ESP_LOGD(TAG, "Adding new endpoint - ID: %s , PublicKey: %s",
+        ESP_LOGD(TAG, "Adding new endpoint - ID: %s, PublicKey: %s",
                  utils::bufToHexString(endpointId.data(), 6).c_str(),
                  utils::bufToHexString(endEphPubKey, sizeof(endEphPubKey)).c_str());
         homeKeyEndpoint::endpoint_t endpoint;
@@ -459,7 +496,7 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
         std::vector<uint8_t> x_coordinate = get_x(endEphPubKey, sizeof(endEphPubKey));
 
         endpoint.counter = 0;
-        endpoint.key_type = tlv8.buf(kDevice_Req_Key_Type)[0];
+        endpoint.key_type = tlv8.find(kDevice_Req_Key_Type)->val.get()[0];
         endpoint.last_used_at = 0;
         endpoint.enrollments.hap = enrollment;
         std::fill(endpoint.persistent_key, endpoint.persistent_key + 32, 0);
@@ -470,55 +507,66 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
         save_to_nvs();
         return std::make_tuple(foundIssuer->issuerId, homeKeyReader::SUCCESS);
       }
-      else
-      {
-        ESP_LOGD(TAG, "Endpoint already exists - ID: %s", utils::bufToHexString(foundEndpoint->endpointId, 6).c_str());
-        save_to_nvs();
-        return std::make_tuple(tlv8.buf(kDevice_Req_Issuer_Key_Identifier), homeKeyReader::DUPLICATE);
-      }
-      tlv8.clear();
+
+      ESP_LOGD(TAG, "Endpoint already exists - ID: %s", utils::bufToHexString(foundEndpoint->endpointId, 6).c_str());
+      //save_to_nvs();
+      return std::make_tuple(foundIssuer->issuerId, homeKeyReader::DUPLICATE);
     }
-    else
-    {
-      ESP_LOGD(TAG, "Issuer does not exist - ID: %s", utils::bufToHexString(tlv8.buf(kDevice_Req_Issuer_Key_Identifier), 8).c_str());
-      save_to_nvs();
-      return std::make_tuple(tlv8.buf(kDevice_Req_Issuer_Key_Identifier), homeKeyReader::DOES_NOT_EXIST);
-    }
-    return std::make_tuple(readerData.reader_identifier, homeKeyReader::DOES_NOT_EXIST);
+
+    ESP_LOGD(TAG, "Issuer does not exist - ID: %s", utils::bufToHexString(issuerId, 8).c_str());
+    //save_to_nvs();
+    return std::make_tuple(issuerId, homeKeyReader::DOES_NOT_EXIST);
   }
 
   int set_reader_key(uint8_t *buf, size_t len)
   {
     ESP_LOGD(TAG, "Setting reader key: %s", utils::bufToHexString(buf, len).c_str());
-    TLV<Reader_Key_Request, 3> tlv8;
-    tlv8.create(kReader_Req_Key_Type, 1, "KEY.TYPE");
-    tlv8.create(kReader_Req_Reader_Private_Key, 32, "READER.PRIV.KEY");
-    tlv8.create(kReader_Req_Identifier, 8, "IDENTIFIER");
-    // tlv8.create(kRequest_Reader_Key_Request, 64, "READER.REQ");
-    // tlv8.create(kReader_Req_Key_Identifier, 64, "KEY.IDENTIFIER");
+    TLV8 tlv8(NFC_Reader_Key_Names, 3);
+    tlv8.unpack(buf, len);
+    tlv8.print();
 
-    ESP_LOGV(TAG, "RKR TLV DECODE STATE: %d", tlv8.unpack(buf, len));
-    tlv8.print(1);
-    uint8_t *readerKey = tlv8.buf(kReader_Req_Reader_Private_Key);
-    uint8_t *uniqueIdentifier = tlv8.buf(kReader_Req_Identifier);
-    ESP_LOGD(TAG, "Reader Key: %s", utils::bufToHexString(readerKey, tlv8.len(kReader_Req_Reader_Private_Key)).c_str());
-    ESP_LOGD(TAG, "UniqueIdentifier: %s", utils::bufToHexString(uniqueIdentifier, tlv8.len(kReader_Req_Identifier)).c_str());
-    std::vector<uint8_t> pubKey = getPublicKey(readerKey, tlv8.len(kReader_Req_Reader_Private_Key));
+    uint8_t *readerKey = tlv8.find(kReader_Req_Reader_Private_Key)->val.get();
+    size_t readerKeyLen = tlv8.find(kReader_Req_Reader_Private_Key)->len;
+    uint8_t *uniqueIdentifier = tlv8.find(kReader_Req_Identifier)->val.get();
+    size_t uniqueIdentifierLen = tlv8.find(kReader_Req_Identifier)->len;
+    ESP_LOGD(TAG, "Reader Key: %s", utils::bufToHexString(readerKey,readerKeyLen).c_str());
+    ESP_LOGD(TAG, "UniqueIdentifier: %s", utils::bufToHexString(uniqueIdentifier, uniqueIdentifierLen).c_str());
+    std::vector<uint8_t> pubKey = getPublicKey(readerKey, readerKeyLen);
     ESP_LOGD(TAG, "Got reader public key: %s", utils::bufToHexString(pubKey.data(), pubKey.size()).c_str());
     std::vector<uint8_t> x_coordinate = get_x(pubKey.data(), pubKey.size());
     ESP_LOGD(TAG, "Got X coordinate: %s", utils::bufToHexString(x_coordinate.data(), x_coordinate.size()).c_str());
     memcpy(readerData.reader_key_x, x_coordinate.data(), x_coordinate.size());
     memcpy(readerData.reader_public_key, pubKey.data(), pubKey.size());
-    // possible the two following return -1???
-    memcpy(readerData.reader_private_key, readerKey, tlv8.len(kReader_Req_Reader_Private_Key));
-    memcpy(readerData.identifier, uniqueIdentifier, tlv8.len(kReader_Req_Identifier));
+    memcpy(readerData.reader_private_key, readerKey, readerKeyLen);
+    memcpy(readerData.identifier, uniqueIdentifier, uniqueIdentifierLen);
     std::vector<uint8_t> readeridentifier = utils::getHashIdentifier(readerData.reader_private_key, sizeof(readerData.reader_private_key), true);
     ESP_LOGD(TAG, "Reader GroupIdentifier: %s", utils::bufToHexString(readeridentifier.data(), 8).c_str());
     memcpy(readerData.reader_identifier, readeridentifier.data(), 8);
     bool nvs = save_to_nvs();
-    tlv8.clear();
-
     return nvs ? 0 : 1;
+  }
+
+  void encode(std::vector<char> *callback, const unsigned char *src, size_t srcLen) const {
+      size_t out_len = 0;
+
+      mbedtls_base64_encode(nullptr, 0, &out_len, src, srcLen);
+      uint8_t resB64[out_len + 1];
+      int ret = mbedtls_base64_encode(resB64, sizeof(resB64), &out_len, src, srcLen);
+      if ( ret != 0 ) {
+          ESP_LOGW(TAG, "Failure in mbedtls_base64_encode (%i)", ret);
+      }
+      resB64[out_len] = '\0';
+      ESP_LOGI(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
+      callback->insert(callback->end(), resB64, resB64 + sizeof(resB64));
+  }
+
+  void pack_and_encode(std::vector<char> *callback, TLV8& tlv) const {
+      size_t lenTlv = tlv.pack_size();
+      uint8_t dataTlv[lenTlv];
+      tlv.pack(dataTlv);
+      ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(dataTlv, lenTlv).c_str());
+
+      encode(callback, dataTlv, lenTlv);
   }
 
   boolean update(std::vector<char> *callback, int *callbackLen) override
@@ -547,31 +595,16 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
         ESP_LOGI(TAG, "GET READER KEY REQUEST");
         if (strlen((const char *)readerData.reader_private_key) > 0)
         {
-          size_t out_len = 0;
-          TLV<Reader_Key_Response, 2> readerKeyResTlv;
-          readerKeyResTlv.create(kReader_Res_Key_Identifier, 8, "KEY.IDENTIFIER");
-          memcpy(readerKeyResTlv.buf(kReader_Res_Key_Identifier, 8), readerData.reader_identifier, 8);
-          int lenSubTlv = readerKeyResTlv.pack(nullptr);
+          TLV8 readerKeyResTlv(NFC_Reader_Response_Names, 1);
+          readerKeyResTlv.add(kReader_Res_Key_Identifier, 8, readerData.reader_identifier);
+          size_t lenSubTlv = readerKeyResTlv.pack_size();
           uint8_t subTlv[lenSubTlv];
           readerKeyResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
-          readerKeyResTlv.clear();
-          readerKeyResTlv.create(kReader_Res_Reader_Key_Response, lenSubTlv, "READER.RESPONSE");
-          memcpy(readerKeyResTlv.buf(kReader_Res_Reader_Key_Response, lenSubTlv), subTlv, lenSubTlv);
-          int lenTlv = readerKeyResTlv.pack(nullptr);
-          uint8_t tlv[lenTlv];
-          readerKeyResTlv.pack(tlv);
-          ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
-          mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
-          uint8_t resB64[out_len + 1];
-          int ret = mbedtls_base64_encode(resB64, sizeof(resB64), &out_len, tlv, lenTlv);
-          if ( ret != 0 ) {
-            ESP_LOGW(TAG, "Failure in mbedtls_base64_encode (%i)", ret);
-          }
-          resB64[out_len] = '\0';
-          ESP_LOGD(TAG, "B64 ENC STATUS: %d", ret);
-          ESP_LOGI(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
-          callback->insert(callback->end(), resB64, resB64 + sizeof(resB64));
+
+          TLV8 readerResKeyResTlv(NFC_Reader_Key_Response_Names, 1);
+          readerResKeyResTlv.add(kReader_Res_Reader_Key_Response, lenSubTlv, subTlv);
+          pack_and_encode(callback, readerResKeyResTlv);
         }
       }
     }
@@ -584,31 +617,16 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
         if (ret == 0)
         {
           ESP_LOGD(TAG, "KEY SAVED TO NVS, COMPOSING RESPONSE");
-          size_t out_len = 0;
-          TLV<Reader_Key_Response, 2> readerKeyResTlv;
-          readerKeyResTlv.create(kReader_Res_Status, 1, "STATUS");
-          readerKeyResTlv.val(kReader_Res_Status, 0);
-          int lenSubTlv = readerKeyResTlv.pack(nullptr);
+          TLV8 readerKeyResTlv(NFC_Reader_Response_Status_Names, 1);
+          readerKeyResTlv.add(kReader_Res_Status, 0);
+          size_t lenSubTlv = readerKeyResTlv.pack_size();
           uint8_t subTlv[lenSubTlv];
           readerKeyResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
-          readerKeyResTlv.clear();
-          readerKeyResTlv.create(kReader_Res_Reader_Key_Response, lenSubTlv, "READER.RESPONSE");
-          memcpy(readerKeyResTlv.buf(kReader_Res_Reader_Key_Response, lenSubTlv), subTlv, lenSubTlv);
-          int lenTlv = readerKeyResTlv.pack(nullptr);
-          uint8_t tlv[lenTlv];
-          readerKeyResTlv.pack(tlv);
-          ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
-          mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
-          unsigned char resB64[out_len + 1];
-          ret = mbedtls_base64_encode(resB64, out_len, &out_len, tlv, lenTlv);
-          if ( ret != 0 ) {
-              ESP_LOGW(TAG, "Failure in mbedtls_base64_encode (%i)", ret);
-          }
-          resB64[out_len] = '\0';
-          ESP_LOGD(TAG, "B64 ENC STATUS: %d", ret);
-          ESP_LOGD(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
-          callback->insert(callback->end(), resB64, resB64 + sizeof(resB64));
+
+          TLV8 readerResKeyResTlv(NFC_Reader_Key_Response_Names, 1);
+          readerResKeyResTlv.add(kReader_Res_Reader_Key_Response, lenSubTlv, subTlv);
+          pack_and_encode(callback, readerResKeyResTlv);
         }
       }
       else if (!DCR.tag.empty())
@@ -617,35 +635,17 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
         std::tuple<uint8_t *, int> state = provision_device_cred(DCR.value.data(), DCR.value.size());
         if (std::get<1>(state) != 99 && std::get<0>(state) != nullptr)
         {
-          size_t out_len = 0;
-          TLV<Device_Credential_Response, 4> devCredResTlv;
-          devCredResTlv.create(kDevice_Res_Key_Identifier, 8, "KEY.IDENTIFIER");
-          devCredResTlv.create(kDevice_Res_Issuer_Key_Identifier, 8, "ISSUER.IDENTIFIER");
-          devCredResTlv.create(kDevice_Res_Status, 1, "STATUS");
-          memcpy(devCredResTlv.buf(kDevice_Res_Issuer_Key_Identifier, 8), std::get<0>(state), 8);
-          devCredResTlv.val(kDevice_Res_Status, std::get<1>(state));
-          int lenSubTlv = devCredResTlv.pack(nullptr);
+          TLV8 devCredResTlv(NFC_Device_Cred_Request_Names, 3);
+          devCredResTlv.add(kDevice_Res_Issuer_Key_Identifier, 8, std::get<0>(state));
+          devCredResTlv.add(kDevice_Res_Status, std::get<1>(state));
+          size_t lenSubTlv = devCredResTlv.pack_size();
           uint8_t subTlv[lenSubTlv];
           devCredResTlv.pack(subTlv);
           ESP_LOGD(TAG, "SUB-TLV LENGTH: %d, DATA: %s", lenSubTlv, utils::bufToHexString(subTlv, lenSubTlv).c_str());
-          devCredResTlv.clear();
-          devCredResTlv.print(1);
-          devCredResTlv.create(kDevice_Credential_Response, lenSubTlv, "DEV.RESPONSE");
-          memcpy(devCredResTlv.buf(kDevice_Credential_Response, lenSubTlv), subTlv, lenSubTlv);
-          int lenTlv = devCredResTlv.pack(nullptr);
-          uint8_t tlv[lenTlv];
-          devCredResTlv.pack(tlv);
-          ESP_LOGD(TAG, "TLV LENGTH: %d, DATA: %s", lenTlv, utils::bufToHexString(tlv, lenTlv).c_str());
-          mbedtls_base64_encode(nullptr, 0, &out_len, tlv, lenTlv);
-          unsigned char resB64[out_len + 1];
-          int ret = mbedtls_base64_encode(resB64, out_len, &out_len, tlv, lenTlv);
-          if ( ret != 0 ) {
-            ESP_LOGW(TAG, "Failure in mbedtls_base64_encode (%i)", ret);
-          }
-          resB64[out_len] = '\0';
-          ESP_LOGD(TAG, "B64 ENC STATUS: %d", ret);
-          ESP_LOGD(TAG, "RESPONSE LENGTH: %d, DATA: %s", out_len, resB64);
-          callback->insert(callback->end(), resB64, resB64 + sizeof(resB64));
+
+          TLV8 devCredResResTlv(NFC_Device_Cred_Response_Names, 1);
+          devCredResResTlv.add(kDevice_Credential_Response, lenSubTlv, subTlv);
+          pack_and_encode(callback, devCredResResTlv);
         }
       }
     }
