@@ -885,7 +885,17 @@ void setup()
     ESP_LOGD(TAG, "READERDATA - JSON(%d): %s", len, data.dump(-1).c_str());
     homeKeyReader::readerData_t p = data.template get<homeKeyReader::readerData_t>();
     readerData = p;
+
+    ESP_LOGD(TAG, "READER GROUP ID (%d): %s", strlen((const char *)readerData.reader_identifier), utils::bufToHexString(readerData.reader_identifier, sizeof(readerData.reader_identifier)).c_str());
+    ESP_LOGD(TAG, "READER UNIQUE ID (%d): %s", strlen((const char *)readerData.identifier), utils::bufToHexString(readerData.identifier, sizeof(readerData.identifier)).c_str());
+
+    ESP_LOGI(TAG, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
+    for (auto &issuer : readerData.issuers)
+    {
+      ESP_LOGI(TAG, "Issuer ID: %s, Public Key: %s", utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(), utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
+    }
   }
+
 #ifdef STATUS_LED_PIN
   homeSpan.setStatusPin(STATUS_LED_PIN);
 #endif
@@ -895,15 +905,6 @@ void setup()
 #endif
   homeSpan.reserveSocketConnections(2);
   homeSpan.setLogLevel(0);
-
-  ESP_LOGD(TAG, "READER GROUP ID (%d): %s", strlen((const char *)readerData.reader_identifier), utils::bufToHexString(readerData.reader_identifier, sizeof(readerData.reader_identifier)).c_str());
-  ESP_LOGD(TAG, "READER UNIQUE ID (%d): %s", strlen((const char *)readerData.identifier), utils::bufToHexString(readerData.identifier, sizeof(readerData.identifier)).c_str());
-
-  ESP_LOGI(TAG, "HOMEKEY ISSUERS: %d", readerData.issuers.size());
-  for (auto &issuer : readerData.issuers)
-  {
-    ESP_LOGD(TAG, "Issuer ID: %s, Public Key: %s", utils::bufToHexString(issuer.issuerId, sizeof(issuer.issuerId)).c_str(), utils::bufToHexString(issuer.publicKey, sizeof(issuer.publicKey)).c_str());
-  }
 #ifdef HOSTNAME_SUFFIX
   homeSpan.setHostNameSuffix(HOSTNAME_SUFFIX);
 #endif
@@ -913,7 +914,7 @@ void setup()
     nvs_open("OTA",NVS_READONLY,&otaNVS);
     if ( nvs_get_str(otaNVS, "OTADATA", nullptr, &len) == ESP_ERR_NOT_FOUND ) {
         // no OTA password set in NVS so use the compile time default
-        ESP_LOGD(TAG, "Using compile-time OTA password");
+        ESP_LOGI(TAG, "Using compile-time OTA password");
         homeSpan.enableOTA(OTA_AUTH);
     } else {
         // looks like there is an OTA password set in NVS so we'll let OTA use that
@@ -921,20 +922,40 @@ void setup()
     }
     nvs_close(otaNVS);
 #endif // OTA_AUTH
-  homeSpan.begin(Category::Locks, DISPLAY_NAME);
 #ifdef WIFI_SSID
-  homeSpan.setWifiCredentials(WIFI_SSID, WIFI_CREDENTIALS);
+    nvs_handle wifiNVS;
+    nvs_open("WIFI",NVS_READONLY,&wifiNVS);
+    if (nvs_get_blob(wifiNVS, "WIFIDATA", nullptr, &len) == ESP_OK ) {
+        // wifi credentials already exist in NVS, either because we set them originally or because they had
+        // been set manually... in either case, we shouldn't override
+    } else {
+        ESP_LOGI(TAG, "Using compile-time Wifi credentials");
+        homeSpan.setWifiCredentials(WIFI_SSID, WIFI_CREDENTIALS);
+    }
+    nvs_close(wifiNVS);
 #else
   homeSpan.enableAutoStartAP();
-#endif
+#endif // WIFI_SSID
 #ifdef PAIRING_CODE
-  homeSpan.setPairingCode(PAIRING_CODE);
-#endif
+    nvs_handle srpNVS;
+    nvs_open("SRP",NVS_READONLY,&srpNVS);
+    // might need to open this
+    if (nvs_get_blob(srpNVS, "VERIFYDATA", nullptr, &len) == ESP_OK ) {
+        // a pairing code already exists in NVS, either because we set it originally or because it has been
+        // set manually... in either case, we shouldn't override
+    } else {
+        ESP_LOGI(TAG, "Using compile-time Pairing code");
+        homeSpan.setPairingCode(PAIRING_CODE);
+    }
+    nvs_close(srpNVS);
+#endif // PAIRING_CODE
   homeSpan.setSerialInputDisable(DISABLE_SERIAL_PORT);
   homeSpan.setSketchVersion(__DATE__ " " __TIME__);
 
   homeSpan.setPairCallback(pairCallback);
   homeSpan.setWifiCallback(wifiCallback);
+
+  homeSpan.begin(Category::Locks, DISPLAY_NAME);
 
   new SpanUserCommand('D', "Delete Home Key Data", deleteReaderData);
   new SpanUserCommand('L', "Set Log Level", setLogLevel);
