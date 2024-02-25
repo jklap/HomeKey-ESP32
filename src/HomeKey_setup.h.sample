@@ -31,7 +31,7 @@
 // disable Serial port access?
 #define DISABLE_SERIAL_PORT false
 
-// comment out to disable OTA updates (default here is the HomeSpan default)
+// comment out to disable OTA updates (default auth here is the HomeSpan default)
 #define OTA_AUTH "homespan-ota"
 
 #define PN532_USES_SPI
@@ -42,7 +42,7 @@
     // GPIO18: SCK
     // GPIO19: MISO
     // GPIO23: MOSI
-    // chip select pin
+    // GPIO5: chip select pin
     #define PN532_SS (GPIO_NUM_5)
 #endif
 
