@@ -353,7 +353,7 @@ struct LockMechanism : Service::LockMechanism
       if ( mqtt_enabled && mqtt_topics.tag_scanned_topic != nullptr ) {
           mqtt.publish(mqtt_topics.tag_scanned_topic, utils::bufToHexString(uid, uidLen).c_str());
       }
-#endif
+#endif // SEND_PASSIVE_TAG_SCANNED
   }
 
   static void publish_auth(uint8_t *uid, uint8_t uidLen, uint8_t *issuerId, uint8_t *endpointId) {
@@ -657,9 +657,13 @@ struct NFCAccess : Service::NFCAccess, CommonCryptoUtils
       json serializedData = readerData;
       auto msgpack = json::to_msgpack(serializedData);
       esp_err_t set_nvs = nvs_set_blob(savedData, "READERDATA", msgpack.data(), msgpack.size());
+      if ( set_nvs != ESP_OK ) {
+          ESP_LOGW(TAG, "NVS SET: %s", esp_err_to_name(set_nvs));
+      }
       esp_err_t commit_nvs = nvs_commit(savedData);
-      ESP_LOGD(TAG, "NVS SET: %s", esp_err_to_name(set_nvs));
-      ESP_LOGD(TAG, "NVS COMMIT: %s", esp_err_to_name(commit_nvs));
+      if ( commit_nvs != ESP_OK ) {
+          ESP_LOGW(TAG, "NVS COMMIT: %s", esp_err_to_name(commit_nvs));
+      }
       const char *res = "BwMCAQA=";
       size_t resLen = 9;
       ESP_LOGD(TAG, "RESPONSE LENGTH: %d, DATA: %s", resLen, res);
@@ -770,7 +774,6 @@ void wifiCallback()
         // let mqtt get some time to make any needed connections to the broker
         mqtt.loop();
 
-        char *message;
         char *topic;
 
 #ifdef HA_LOCK_CONTROL
@@ -809,53 +812,45 @@ void wifiCallback()
         free(topic);
 
 #else // not HA_LOCK_CONTROL
-        const char *config_json = R"END({
-"name":null,
-"dev_cla":"lock",
-"stat_t":"%s",
-"pl_on":"%i",
-"pl_off":"%i",
-"avty_t":"%s",
-"pl_avail":"online",
-"pl_not_avail":"offline",
-"uniq_id":"state%s",
-"dev":{
- "ids":["%s"],
- "name":"%s",
- "sw":"%s"
-}
-})END";
+        std::string id = "state";
+        id += unique_id;
+
+        json config_json = {
+                { "name", nullptr },
+                { "dev_cla", "lock" },
+                { "stat_t", mqtt_topics.state_topic },
+                { "pl_on", "0" },
+                { "pl_off", "1" },
+                { "avty_t", mqtt_topics.prefix },
+                { "pl_avail", "online" },
+                { "pl_not_avail", "offline" },
+                { "uniq_id", id },
+                { "dev", {
+                    { "ids", { unique_id } },
+                     { "name", DISPLAY_NAME },
+                     { "sw", __DATE__ " " __TIME__ }
+                }}
+        };
+        ESP_LOGI(TAG, "binary_sensor config: %s", config_json.dump().c_str());
 
         asprintf(&topic, "%s/binary_sensor/%s/config", HA_DISCOVERY_PREFIX, unique_id);
-        asprintf(&message, config_json,
-                 mqtt_topics.state_topic,
-                 LOCK_UNSECURED, LOCK_SECURED,
-                 mqtt_topics.prefix,
-                 unique_id, unique_id,
-                 DISPLAY_NAME, __DATE__ " " __TIME__);
-        ESP_LOGD(TAG, "binary_sensor config: %s", message);
-
-        mqtt.publish(topic, message, 0, true);
-        free(message);
+        mqtt.publish(topic, config_json.dump().c_str(), 0, true);
         free(topic);
 #endif // not HA_LOCK_CONTROL
 
 #ifdef HA_SEND_TAG_TOPIC
-        const char *tag_json = R"END({
-"topic":"%s",
-"dev":{
- "ids":["%s"]
-}
-})END";
         asprintf(&mqtt_topics.tag_scanned_topic, HA_SEND_TAG_TOPIC, unique_id);
 
-        asprintf(&topic, "%s/tag/%s/config", HA_DISCOVERY_PREFIX, unique_id);
-        asprintf(&message, tag_json,
-                 mqtt_topics.tag_scanned_topic, unique_id);
-        ESP_LOGD(TAG, "tag_scanned config: %s", message);
+        json tag_json = {
+                { "topic", mqtt_topics.tag_scanned_topic },
+                { "dev", {
+                        { "ids", { unique_id }}
+                }}
+        };
+        ESP_LOGI(TAG, "tag_scanned config: %s", tag_json.dump().c_str());
 
-        mqtt.publish(topic, message, 0, true);
-        free(message);
+        asprintf(&topic, "%s/tag/%s/config", HA_DISCOVERY_PREFIX, unique_id);
+        mqtt.publish(topic, tag_json.dump().c_str(), 0, true);
         free(topic);
 #endif // HA_SEND_TAG_TOPIC
 #endif // HA_DISCOVERY_PREFIX
